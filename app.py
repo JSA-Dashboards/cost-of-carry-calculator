@@ -7,6 +7,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import storage_rates
+
 from history_archive import ARCHIVE_CUTOFF_YEAR, archive_source, load_price_archive
 from massive_api import (MassiveApiError, get_fed_funds_rate, get_futures_curve,
                          get_settlement_histories)
@@ -362,11 +364,12 @@ def render_commodity(commodity: dict, api_key: str, as_of: date, default_rate_pc
             storage_rate = st.number_input(
                 f"Daily storage rate ({commodity['storage_unit']})",
                 min_value=0.0,
-                value=commodity["default_storage"],
+                value=default_storage_for(commodity, as_of),
                 step=0.00005,
                 format="%.5f",
                 key=f"storage_{key}",
                 width=230,
+                help="Defaults to today's CME maximum storage rate where one is on record.",
             )
             annual_rate_pct = st.number_input(
                 "Annual interest rate (%)",
@@ -595,14 +598,42 @@ def carry_components(near_price: float, days: int, storage_rate: float,
     return storage_full, interest_full
 
 
+def default_storage_for(commodity: dict, as_of: date) -> float:
+    """Today's CME maximum storage rate where one is on record, else the configured
+    default. Keeps the rate inputs in step with VSR moves instead of a hardcoded value
+    that goes stale the next time CME adjusts wheat."""
+    rate = storage_rates.rate_on(commodity["product_code"], as_of)
+    return commodity["default_storage"] if rate is None else rate
+
+
+def historical_storage_toggle(product_code: str, key: str) -> bool:
+    """On by default for markets with a CME rate history; absent (and off) otherwise.
+    Only affects % of full carry — nominal spreads carry no storage term."""
+    if not storage_rates.has_schedule(product_code):
+        return False
+    return st.toggle(
+        "CME historical storage", value=True, key=key,
+        help="Price each past session's % of full carry at the CME maximum storage rate "
+        "in effect that day — corn/soybeans stepped from 16.5 to 26.5/100¢ in late 2019, "
+        "and SRW/HRW wheat move under Variable Storage Rates. Off applies today's rate "
+        "to every date.",
+    )
+
+
 def build_pair_series(hist: dict, near: str, far: str, mode: str,
                       storage_rate: float, annual_rate: float, multiplier: int,
-                      expiries: dict | None = None):
+                      expiries: dict | None = None, product_code: str | None = None,
+                      historical_storage: bool = False):
     """Returns (series, near_expiry, far_expiry, storage_full, interest_full_latest).
 
     A still-trading contract's history ends today, not at its expiration, so the
     seasonal alignment uses the real expiry where we know it — otherwise the current
-    year sits weeks out of step with the expired analogs."""
+    year sits weeks out of step with the expired analogs.
+
+    With `historical_storage`, % of full carry prices each session at the CME storage
+    rate in effect that day (see storage_rates.py) rather than today's rate. The returned
+    `storage_full` stays at `storage_rate` either way, because it feeds the reference
+    lines, which are drawn at today's level."""
     blank = (None, None, None, None, None)
     near_h, far_h = hist.get(near), hist.get(far)
     if near_h is None or far_h is None or not len(near_h) or not len(far_h):
@@ -626,7 +657,15 @@ def build_pair_series(hist: dict, near: str, far: str, mode: str,
         return spread, near_expiry, far_expiry, storage_full, interest_latest
 
     interest_series = near_prices * annual_rate * days / 360
-    pct = (spread / -(storage_full + interest_series))
+    if historical_storage and product_code and storage_rates.has_schedule(product_code):
+        daily_rates = pd.Series(
+            storage_rates.rates_on(product_code, list(spread.index), storage_rate),
+            index=spread.index,
+        )
+        storage_term = days * daily_rates * multiplier
+    else:
+        storage_term = storage_full
+    pct = (spread / -(storage_term + interest_series))
     pct = pct.replace([float("inf"), float("-inf")], pd.NA).dropna()
     return pct, near_expiry, far_expiry, storage_full, interest_latest
 
@@ -722,6 +761,7 @@ def render_charts(commodity: dict, table: pd.DataFrame, history: dict, curve: pd
             "Average", value=True, key=f"avg_{key}",
             help="Mean across the overlaid years at each point in the season.",
         )
+        historical_storage = historical_storage_toggle(code, f"histstore_{key}")
 
     if not far:
         st.info("Pick a far leg that expires after the near leg.")
@@ -735,7 +775,8 @@ def render_charts(commodity: dict, table: pd.DataFrame, history: dict, curve: pd
     label = f"{friendly_contract(near, code)} / {friendly_contract(far, code)}"
 
     series, near_exp, far_exp, storage_full, interest_full = build_pair_series(
-        history, near, far, mode, storage_rate, annual_rate, commodity["multiplier"], expiries
+        history, near, far, mode, storage_rate, annual_rate, commodity["multiplier"], expiries,
+        product_code=code, historical_storage=historical_storage,
     )
     left, right = st.columns(2)
 
@@ -791,7 +832,8 @@ def render_charts(commodity: dict, table: pd.DataFrame, history: dict, curve: pd
             n = deep_year_key(code, near_letter, expiries[near].year - back)
             f = deep_year_key(code, far_letter, expiries[far].year - back)
             s, n_exp, _f_exp, s_full, i_full = build_pair_series(
-                deep_hist, n, f, mode, storage_rate, annual_rate, commodity["multiplier"], deep_expiries
+                deep_hist, n, f, mode, storage_rate, annual_rate, commodity["multiplier"], deep_expiries,
+                product_code=code, historical_storage=historical_storage,
             )
             if s is None or not len(s):
                 continue
@@ -884,7 +926,7 @@ def sheet_ticker(ticker: str, product_code: str, expiration: date) -> str:
 
 def summary_section(commodity: dict, api_key: str, as_of: date, annual_rate_pct: float):
     code = commodity["product_code"]
-    storage_rate = commodity["default_storage"]
+    storage_rate = default_storage_for(commodity, as_of)
     annual_rate = annual_rate_pct / 100
 
     st.markdown(
@@ -1266,8 +1308,8 @@ def render_matrix(api_key: str, as_of: date, default_rate_pct: float):
         n_load = st.slider("Contract months", 3, 12, 9, key="mx_months", width=200)
         storage_rate = st.number_input(
             f"Daily storage ({commodity['storage_unit']})", min_value=0.0,
-            value=commodity["default_storage"], step=0.00005, format="%.5f",
-            key="mx_storage", width=220)
+            value=default_storage_for(commodity, as_of), step=0.00005, format="%.5f",
+            key=f"mx_storage_{code}", width=220)
         annual_rate_pct = st.number_input("Annual interest rate (%)", min_value=0.0, max_value=25.0,
                                           value=default_rate_pct, step=0.01, key="mx_rate", width=190)
 
@@ -1442,10 +1484,13 @@ def render_seasonal_pair(commodity: dict, near: str, far: str, api_key: str, as_
                                help="Corn/soybeans reach back through the 2008+ archive." if has_archive else None)
         show_avg = st.toggle("Average", value=True, key="b_avg",
                              help="Mean across the overlaid years at each point in the season.")
+        historical_storage = historical_storage_toggle(code, f"b_histstore_{code}")
+        # keyed on the market: otherwise switching commodity keeps the previous
+        # market's rate (meal's 0.12 carried into corn) instead of the new default
         storage_rate = st.number_input(
             f"Daily storage ({commodity['storage_unit']})", min_value=0.0,
-            value=commodity["default_storage"], step=0.00005, format="%.5f",
-            key="b_storage", width=210)
+            value=default_storage_for(commodity, as_of), step=0.00005, format="%.5f",
+            key=f"b_storage_{code}", width=210)
         annual_rate_pct = st.number_input("Annual interest rate (%)", min_value=0.0, max_value=25.0,
                                           value=default_rate_pct, step=0.01, key="b_rate", width=180)
         window_label = st.segmented_control("Season length", ["6M", "1Y", "18M"],
@@ -1476,7 +1521,8 @@ def render_seasonal_pair(commodity: dict, near: str, far: str, api_key: str, as_
         n = deep_year_key(code, near_letter, expiries[near].year - back)
         f = deep_year_key(code, far_letter, expiries[far].year - back)
         series, near_exp, _far_exp, s_full, i_full = build_pair_series(
-            hist, n, f, mode, storage_rate, annual_rate, commodity["multiplier"], deep_expiries
+            hist, n, f, mode, storage_rate, annual_rate, commodity["multiplier"], deep_expiries,
+            product_code=code, historical_storage=historical_storage,
         )
         display = (f"{MONTH_LETTERS[near_letter]} {expiries[near].year - back} / "
                   f"{MONTH_LETTERS[far_letter]} {expiries[far].year - back}")
@@ -1621,8 +1667,8 @@ def render_builder(api_key: str, as_of: date, default_rate_pct: float):
         with rate_row:
             storage_rate = st.number_input(
                 f"Daily storage ({commodity['storage_unit']})", min_value=0.0,
-                value=commodity["default_storage"], step=0.00005, format="%.5f",
-                key="b_combo_storage", width=210,
+                value=default_storage_for(commodity, as_of), step=0.00005, format="%.5f",
+                key=f"b_combo_storage_{commodity['product_code']}", width=210,
             )
             annual_rate_pct = st.number_input(
                 "Annual interest rate (%)", min_value=0.0, max_value=25.0,

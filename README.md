@@ -65,6 +65,32 @@ identical data — so a Snowflake outage degrades rather than breaks the app. Th
 Builder's seasonal caption names whichever source actually served the rows.
 `snowflake/01_migrate_archive.py` creates the schema and (re-)loads it from the CSV.
 
+### Historical storage rates
+
+% of full carry on the charts prices each past session at the CME maximum storage rate
+in effect **that day** (`storage_rates.py`) — the same point-in-time convention CME's own
+VSR calculation uses. Applying today's rate to every date misstates history: on
+Dec 18, 2019 the Mar/May 2020 corn spread was 47.9% of full carry at the 16.5 rate then in
+force, but reads 32.9% at today's 26.5.
+
+| Market | History |
+| --- | --- |
+| Corn | 16.5/100¢ → **26.5** from 12/19/2019 (SER-8198RRR) |
+| Soybeans | 16.5/100¢ → **26.5** from 11/19/2019 (SER-8198RRR) |
+| Chicago SRW | VSR: 16.5 → 26.5 (9/19/2023) → 16.5 (3/19/2024) → 26.5 (5/19/2024) → 16.5 (3/19/2026) |
+| KC HRW | VSR: 16.5 → 26.5 (5/19/2025) → 16.5 (7/19/2026) |
+
+Both wheats' minimum rises to 26.5 after the December 2026 contracts expire (SER-9809).
+Every wheat step comes from a CME VSR results notice, and each notice's starting rate
+matches the previous notice's outcome. Rate inputs also default to today's CME rate.
+
+The **CME historical storage** toggle (on by default) switches this off to apply one rate
+throughout. It only affects % of full carry; nominal spreads have no storage term.
+
+Known limits: wheat between Mar 2021 and Apr 2022 is bracketed at the 16.5 floor at both
+ends rather than individually verified, and interest is still applied at today's rate
+for every date.
+
 ### Snowflake configuration
 
 Set these as Streamlit Cloud secrets (or in a local, gitignored `.env`):
