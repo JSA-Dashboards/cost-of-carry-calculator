@@ -65,13 +65,24 @@ identical data — so a Snowflake outage degrades rather than breaks the app. Th
 Builder's seasonal caption names whichever source actually served the rows.
 `snowflake/01_migrate_archive.py` creates the schema and (re-)loads it from the CSV.
 
-### Historical storage rates
+### Historical storage and interest rates
 
-% of full carry on the charts prices each past session at the CME maximum storage rate
-in effect **that day** (`storage_rates.py`) — the same point-in-time convention CME's own
-VSR calculation uses. Applying today's rate to every date misstates history: on
-Dec 18, 2019 the Mar/May 2020 corn spread was 47.9% of full carry at the 16.5 rate then in
-force, but reads 32.9% at today's 26.5.
+% of full carry on the charts prices each past session at the rates in effect **that
+day** — the same point-in-time convention CME's own VSR calculation uses. Applying today's
+rates to every date misstates history badly: on Dec 18, 2019 the Mar/May 2020 corn spread
+was 47.9% of full carry at the 16.5 storage rate then in force, but reads 32.9% at today's
+26.5; and fed funds sat near 0.06% in mid-2021 against ~3.7% today.
+
+**Interest** (`interest_rates.py`) is that day's effective fed funds rate plus the same
+2.25% spread the live rate uses. Source: Board of Governors of the Federal Reserve System
+(US), Federal Funds Effective Rate [DFF], retrieved from FRED, Federal Reserve Bank of
+St. Louis — public domain, citation requested. It is downloaded live (cached 12h) with a
+committed fallback in `data/fed_funds_dff.csv`; refresh that with
+`python interest_rates.py`. History uses the *effective* rate on the day, whereas today's
+rate in the app is the *ZQ futures-implied* rate, so the two can differ by a few basis
+points at the right-hand edge of a chart.
+
+**Storage** (`storage_rates.py`) follows CME's published maximums:
 
 | Market | History |
 | --- | --- |
@@ -84,12 +95,13 @@ Both wheats' minimum rises to 26.5 after the December 2026 contracts expire (SER
 Every wheat step comes from a CME VSR results notice, and each notice's starting rate
 matches the previous notice's outcome. Rate inputs also default to today's CME rate.
 
-The **CME historical storage** toggle (on by default) switches this off to apply one rate
-throughout. It only affects % of full carry; nominal spreads have no storage term.
+The **Historical rates** toggle (on by default, on every market) switches both off to apply
+today's rates throughout. Interest history covers every market; storage history only the
+four markets CME publishes a schedule for. Nominal spreads are unaffected. The reference
+lines stay at today's storage and interest levels either way.
 
-Known limits: wheat between Mar 2021 and Apr 2022 is bracketed at the 16.5 floor at both
-ends rather than individually verified, and interest is still applied at today's rate
-for every date.
+Known limit: wheat storage between Mar 2021 and Apr 2022 is bracketed at the 16.5 floor at
+both ends rather than individually verified.
 
 ### Snowflake configuration
 
