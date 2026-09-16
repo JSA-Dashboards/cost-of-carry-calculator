@@ -33,8 +33,7 @@ Markets: corn (ZC), soybeans (ZS), soybean meal (ZM), soybean oil (ZL), Chicago/
 ## Interest rate
 
 Defaults to the live front-month **CME 30-Day Federal Funds future (ZQ)** implied rate
-(`100 - price`) plus a 2.50% spread, the workbook's convention for a commercial cost of
-funds. Editable per market.
+(`100 - price`) plus a 2.25% spread for a commercial cost of funds. Editable per market.
 
 ## Data source
 
@@ -67,50 +66,70 @@ Builder's seasonal caption names whichever source actually served the rows.
 
 ### Historical storage and interest rates
 
-% of full carry on the charts prices each past session at the rates in effect **that
-day** — the same point-in-time convention CME's own VSR calculation uses. Applying today's
-rates to every date misstates history badly: on Dec 18, 2019 the Mar/May 2020 corn spread
-was 47.9% of full carry at the 16.5 storage rate then in force, but reads 32.9% at today's
-26.5; and fed funds sat near 0.06% in mid-2021 against ~3.7% today.
+Applying today's rates to every past spread misstates history. With **Historical rates** on
+(the default, on every market), each spread is priced at the rates that actually applied.
 
-**Interest** (`interest_rates.py`) is that day's effective fed funds rate plus the same
-2.25% spread the live rate uses. Source: Board of Governors of the Federal Reserve System
-(US), Federal Funds Effective Rate [DFF], retrieved from FRED, Federal Reserve Bank of
-St. Louis — public domain, citation requested. It is downloaded live (cached 12h) with a
-committed fallback in `data/fed_funds_dff.csv`; refresh that with
-`python interest_rates.py`. History uses the *effective* rate on the day, whereas today's
-rate in the app is the *ZQ futures-implied* rate, so the two can differ by a few basis
-points at the right-hand edge of a chart.
+**Storage is priced per spread, not per date** (`storage_rates.py`). A spread carries under
+the CME maximum storage rate in force across its **carry window** — from the 19th of its
+near delivery month to the 19th of its far one. That rate belongs to the spread pair, so
+it's one constant for the whole line whatever date the spread is viewed on:
 
-**Storage** (`storage_rates.py`) follows CME's published maximums:
+- **VSR wheat (SRW, HRW).** Each *nearby* spread (H/K, K/N, N/U, U/Z, Z/H) is observed from
+  the 19th of the previous delivery month through nearby option expiration. Its average %
+  of financial full carry (≥ 80% up, ≤ 50% down, 10/100¢/day steps, 16.5 floor) sets the
+  rate that takes effect on the 19th of the nearby delivery month, after delivery, and
+  governs certificates carried into the next delivery month. So a Mar/May spread carries
+  under the rate its own Mar–May observation set. Adjacent spreads sit in one VSR period;
+  a wider spread such as Dec/May spans several and can straddle a change.
+- **Corn and soybeans.** Fixed maximums that stepped from 16.5 to 26.5 after the Dec 2019
+  (corn) and Nov 2019 (soybeans) contracts expired. The increase was announced in 2018, so
+  a spread whose carry window falls after the step carries at 26.5 across its whole life.
 
-| Market | History |
+| Market | Storage rate history (/100 of a cent per bushel per day) |
 | --- | --- |
-| Corn | 16.5/100¢ → **26.5** from 12/19/2019 (SER-8198RRR) |
-| Soybeans | 16.5/100¢ → **26.5** from 11/19/2019 (SER-8198RRR) |
-| Chicago SRW | VSR: 16.5 → 26.5 (9/19/2023) → 16.5 (3/19/2024) → 26.5 (5/19/2024) → 16.5 (3/19/2026) |
-| KC HRW | VSR: 16.5 → 26.5 (5/19/2025) → 16.5 (7/19/2026) |
+| Corn | 16.5 → **26.5** from 12/19/2019 (SER-8198RRR) |
+| Soybeans | 16.5 → **26.5** from 11/19/2019 (SER-8198RRR) |
+| Chicago SRW | VSR: 16.5 → 26.5 (9/19/2023) → 16.5 (3/19/2024) → 26.5 (5/19/2024) → 16.5 (3/19/2026) → 26.5 (12/19/2026, new minimum) |
+| KC HRW | VSR: 16.5 → 26.5 (5/19/2025) → 16.5 (7/19/2026) → 26.5 (12/19/2026, new minimum) |
 
-Both wheats' minimum rises to 26.5 after the December 2026 contracts expire (SER-9809).
-Every wheat step comes from a CME VSR results notice, and each notice's starting rate
-matches the previous notice's outcome. Rate inputs also default to today's CME rate.
+Both wheats' minimum rises to 26.5 after the December 2026 contracts expire, regardless of
+that period's VSR result (SER-9809). Every wheat step comes from a CME VSR results notice,
+and each notice's starting rate matches the previous notice's outcome. Rates are published
+through Mar 18, 2027; carry windows reaching past that are flagged *pending*
+(`KNOWN_UNTIL` — advance it as notices are added). Rate inputs default to today's CME rate.
 
-The **Historical rates** toggle (on by default, on every market) switches both off to apply
-today's rates throughout. Interest history covers every market; storage history only the
-four markets CME publishes a schedule for. Nominal spreads are unaffected. The reference
-lines stay at today's storage and interest levels either way.
+Example: SRW Mar '26/May '26 carries under the 16.5 rate set by its own Mar–May 2026
+observation (CME cut 26.5 → 16.5 on Mar 19, 2026), so its full storage is 10.23¢, not the
+16.43¢ a flat 26.5 would give — e.g. 68.2% of full carry on Jul 17, 2025, against 49.3%.
+
+**Interest is priced per date** (`interest_rates.py`) — financing is paid at the rate of the
+day, as in CME's own VSR calculation: each session's effective fed funds plus the same 2.25%
+spread the live rate uses. Source: Board of Governors of the Federal Reserve System (US),
+Federal Funds Effective Rate [DFF], retrieved from FRED, Federal Reserve Bank of St. Louis —
+public domain, citation requested. Downloaded live (cached 12h) with a committed fallback in
+`data/fed_funds_dff.csv`; refresh with `python interest_rates.py`. History uses the
+*effective* rate on the day, whereas today's rate in the app is *ZQ futures-implied*, so the
+two can differ by a few basis points at a chart's right-hand edge.
+
+Reference lines use the pair's carry-window storage and today's interest.
+
+**Difference from CME's published VSR percentages.** CME's own observation-window
+calculation uses the storage rate current on each observation day, because the outcome it
+is deciding isn't known yet. These charts use the rate the spread was actually carried
+under, known in hindsight, so a spread's % of full carry during its own observation window
+can differ from the figure in CME's notice whenever that window produced a change.
 
 Known limit: wheat storage between Mar 2021 and Apr 2022 is bracketed at the 16.5 floor at
 both ends rather than individually verified.
 
 **VSR colouring (wheat).** On SRW and HRW seasonal charts — per-market tabs and the Spread
-Builder — each crop year's line is coloured by its VSR level: green **VSR 1** (16.5/100¢,
-~5¢/month), orange **VSR 2** (26.5, ~8¢), red **VSR 3** (36.5, ~11¢), with the level in the
-legend. A year is classed by the level in effect at its near leg's expiration, since VSR
-can change mid-year (SRW moved three times in 2023-24); a contract still trading uses
-today's level. Years sharing a level get successively lighter shades so they stay
-distinguishable. Levels are numbered by absolute rate, so they keep their meaning after
-the December 2026 minimum increase.
+Builder — each crop year's line is coloured by the VSR level governing its carry window:
+green **VSR 1** (16.5, ~5¢/month), orange **VSR 2** (26.5, ~8¢), red **VSR 3** (36.5, ~11¢),
+with the level in the legend. A spread straddling a change is labelled e.g. *VSR 2→1* and
+coloured by the level covering more of its window; one reaching past the last published
+determination is marked *pending*. Years sharing a level get successively lighter shades.
+Levels are numbered by absolute rate, so they keep their meaning after the December 2026
+minimum increase.
 
 ### Snowflake configuration
 

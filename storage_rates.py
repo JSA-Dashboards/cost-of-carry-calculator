@@ -1,9 +1,12 @@
 """CME maximum storage (premium) charges over time, for historical % of full carry.
 
-Charts compute % of full carry for every past session. Using today's storage rate for all
-of them misstates history wherever the exchange rate has since changed, so each session
-is priced at the rate that was in effect on that date — the same point-in-time convention
-CME's own VSR calculation uses ("current daily premium charge").
+Using today's storage rate for every spread misstates history wherever the exchange rate
+has since changed. The storage that matters to a spread is the rate it is actually carried
+under: the rate(s) in force across its carry window, from the 19th of the near delivery
+month to the 19th of the far one. For VSR wheat that rate is set by the spread's own
+observation window and takes effect after the near delivery period, so it belongs to the
+spread pair — not to whichever date the spread happens to be viewed on. See
+`carry_window`, `carry_rate` and `vsr_profile`.
 
 Rates are dollars per bushel per day, matching the app's `default_storage` convention
 (x100 gives cents on the bushel-quoted markets): 0.00165 = 16.5/100 of a cent per bushel
@@ -92,36 +95,97 @@ def rate_on(product_code: str, on: date) -> float | None:
     return steps[i][1] if i >= 0 else None
 
 
-def rates_on(product_code: str, dates, fallback: float) -> list[float]:
-    """Vectorised `rate_on` over a sequence of dates, substituting `fallback` wherever the
-    schedule has no answer (unscheduled product, or a date before its first entry)."""
-    if product_code not in SCHEDULE:
-        return [fallback] * len(dates)
-    out = []
-    for d in dates:
-        r = rate_on(product_code, d)
-        out.append(fallback if r is None else r)
-    return out
-
-
 # Markets whose storage rate moves under the Variable Storage Rate mechanism. Corn and
 # soybeans have fixed maximums, so they have no VSR level.
 VSR_PRODUCTS = ("ZW", "KE")
 VSR_FLOOR = 0.00165   # VSR 1: 16.5/100 of a cent per bushel per day, ~5 cents/month
 VSR_STEP = 0.00100    # each level adds 10/100 of a cent per day, ~3 cents/month
 
+# Rates are published up to, but not including, the next undetermined adjustment date.
+# SER-9809 fixed the Sep 19 2026 rate and forced Dec 19 2026 to 26.5, so the next open
+# question is the Mar-May 2027 observation, adjusting Mar 19 2027. Advance this date as
+# each VSR results notice is added to SCHEDULE.
+KNOWN_UNTIL: dict[str, date] = {"ZW": date(2027, 3, 19), "KE": date(2027, 3, 19)}
 
-def vsr_level(product_code: str, on: date) -> int | None:
-    """VSR level in effect on `on`: 1 = 16.5/100 (~5c/mo), 2 = 26.5 (~8c/mo),
-    3 = 36.5 (~11c/mo), and so on — numbered by absolute rate, not steps above the
-    floor, so a level keeps its meaning after the Dec 2026 minimum increase.
-    None for non-VSR markets or dates outside the schedule."""
+# CME storage changes take effect on the 19th of the delivery month, following the
+# delivery period — both the VSR adjustments and the 2019 corn/soybean increase.
+EFFECTIVE_DAY = 19
+
+
+# How VSR works (CME "VSR Timeline and Calculation", SER-9121):
+#   Each NEARBY calendar spread (H/K, K/N, N/U, U/Z, Z/H) is observed from the 19th of the
+#   previous delivery month through nearby option expiration. Its average % of financial
+#   full carry (>= 80% up, <= 50% down) sets the maximum storage rate that takes effect on
+#   the 19th of the nearby delivery month, after its delivery period — the rate charged on
+#   certificates carried from that delivery month into the next.
+# So the storage a spread actually carries under is the rate in force across its CARRY
+# WINDOW, from the 19th of its near delivery month to the 19th of its far one. An adjacent
+# spread sits inside one VSR period, set by its own observation window; a wider spread
+# (e.g. Dec/May) spans several periods and can straddle a change.
+
+
+def carry_window(near_expiry: date, far_expiry: date) -> tuple[date, date]:
+    """[start, end) over which storage is paid when carrying the near leg into the far
+    leg: the 19th of the near delivery month to the 19th of the far delivery month."""
+    return (date(near_expiry.year, near_expiry.month, EFFECTIVE_DAY),
+            date(far_expiry.year, far_expiry.month, EFFECTIVE_DAY))
+
+
+def _segments(product_code: str, start: date, end: date, fallback: float):
+    """Yield (segment_start, segment_end, rate) covering [start, end) in schedule order."""
+    if end <= start:
+        return
+    steps = SCHEDULE.get(product_code, ())
+    cuts = sorted({start, end} | {d for d, _ in steps if start < d < end})
+    for a, b in zip(cuts, cuts[1:]):
+        rate = rate_on(product_code, a)
+        yield a, b, (fallback if rate is None else rate)
+
+
+def average_rate(product_code: str, start: date, end: date, fallback: float) -> float:
+    """Day-weighted average maximum storage rate across [start, end)."""
+    total_days = (end - start).days
+    if total_days <= 0 or product_code not in SCHEDULE:
+        return fallback
+    weighted = sum((b - a).days * r for a, b, r in _segments(product_code, start, end, fallback))
+    return weighted / total_days
+
+
+def carry_rate(product_code: str, near_expiry: date, far_expiry: date, fallback: float) -> float:
+    """The storage rate a spread is actually carried under: the average across its carry
+    window. Constant for the whole life of the spread — it belongs to the pair, not to the
+    date the spread is observed."""
+    start, end = carry_window(near_expiry, far_expiry)
+    return average_rate(product_code, start, end, fallback)
+
+
+def vsr_profile(product_code: str, near_expiry: date, far_expiry: date) -> dict | None:
+    """VSR level(s) governing a spread's carry window, for labelling.
+
+    Returns {"levels": [1, 2] in chronological order with repeats collapsed,
+             "dominant": the level covering the most days,
+             "pending": True if part of the window falls after KNOWN_UNTIL}.
+    None for non-VSR markets."""
     if product_code not in VSR_PRODUCTS:
         return None
-    rate = rate_on(product_code, on)
-    if rate is None:
+    start, end = carry_window(near_expiry, far_expiry)
+    days_by_level: dict[int, int] = {}
+    sequence: list[int] = []
+    for a, b, rate in _segments(product_code, start, end, fallback=VSR_FLOOR):
+        level = int(round((rate - VSR_FLOOR) / VSR_STEP)) + 1
+        days_by_level[level] = days_by_level.get(level, 0) + (b - a).days
+        if not sequence or sequence[-1] != level:
+            sequence.append(level)
+    if not sequence:
         return None
-    return int(round((rate - VSR_FLOOR) / VSR_STEP)) + 1
+    known_until = KNOWN_UNTIL.get(product_code)
+    return {
+        "levels": sequence,
+        "dominant": max(days_by_level, key=days_by_level.get),
+        "pending": bool(known_until and end > known_until),
+    }
+
+
 
 
 def cents_per_month(rate: float) -> int:

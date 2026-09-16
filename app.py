@@ -513,31 +513,45 @@ VSR_PALETTES = {
 VSR_PALETTE_BEYOND = ["#4a148c", "#6a1b9a", "#8e24aa", "#ab47bc", "#ce93d8"]  # 4+ purples
 
 
-def vsr_line_style(product_code: str, near_expiry: date, as_of: date,
+VSR_CENTS = {1: 5, 2: 8, 3: 11}
+
+
+def vsr_line_style(product_code: str, near_expiry: date, far_expiry: date,
                    shades_used: dict[int, int]) -> tuple[str, str] | None:
     """(colour, legend suffix) for one seasonal year of a VSR market, or None otherwise.
 
-    A crop year is classed by the VSR level in effect at its near leg's expiration — the
-    storage rate that spread traded under into delivery. A contract still trading is
-    classed by today's level, since its expiry-day rate isn't settled yet. Mutates
-    `shades_used` to hand out the next shade within each level."""
-    level = storage_rates.vsr_level(product_code, min(near_expiry, as_of))
-    if level is None:
+    A year is classed by the VSR level(s) governing its carry window — the rate set by
+    that spread's own observation window, taking effect after the near delivery period.
+    An adjacent spread has one level; a wider spread can straddle a change and is labelled
+    "VSR 2→1", coloured by whichever level covers more of the window. A window reaching
+    past the last published determination is marked pending. Mutates `shades_used` to hand
+    out the next shade within each level."""
+    profile = storage_rates.vsr_profile(product_code, near_expiry, far_expiry)
+    if profile is None:
         return None
+    level = profile["dominant"]
     palette = VSR_PALETTES.get(level, VSR_PALETTE_BEYOND)
     shade = shades_used.get(level, 0)
     shades_used[level] = shade + 1
-    rate = storage_rates.rate_on(product_code, min(near_expiry, as_of))
-    return palette[shade % len(palette)], f" · VSR {level} ({storage_rates.cents_per_month(rate)}¢)"
+    levels = profile["levels"]
+    if len(levels) == 1:
+        tag = f"VSR {level} ({VSR_CENTS.get(level, '?')}¢)"
+    else:
+        tag = "VSR " + "→".join(str(x) for x in levels)
+    if profile["pending"]:
+        tag += ", pending"
+    return palette[shade % len(palette)], f" · {tag}"
 
 
 def vsr_legend_caption(product_code: str) -> str:
     """One-line key for the VSR colouring, shown under wheat seasonal charts."""
     if product_code not in storage_rates.VSR_PRODUCTS:
         return ""
-    return (" Lines are coloured by VSR level at each year's near-leg expiration — "
-            "green VSR 1 (5¢/mo), orange VSR 2 (8¢), red VSR 3 (11¢); a still-trading "
-            "contract uses today's level.")
+    return (" Lines are coloured by the VSR level governing each year's carry window — set "
+            "by that spread's own observation window and effective after the near delivery "
+            "period: green VSR 1 (5¢/mo), orange VSR 2 (8¢), red VSR 3 (11¢). A spread "
+            "spanning a change shows both levels; 'pending' means CME hasn't yet published "
+            "the determination for part of the window.")
 RANGE_CHOICES = {"1Y": 365, "2Y": 730, "All": None}
 REF_STORAGE_COLOR = "#8d6e63"
 REF_INTEREST_COLOR = "#7986cb"
@@ -651,32 +665,33 @@ def fed_funds_history() -> pd.Series:
 
 
 def historical_rates_toggle(product_code: str, key: str) -> bool:
-    """One switch for pricing past % of full carry at the rates of the day. Interest
+    """One switch for pricing spreads at the rates that actually applied. Interest
     history covers every market; storage history only markets CME publishes a schedule
-    for, so the help text says which apply. Nominal spreads are unaffected by either."""
+    for, so the help text says which apply."""
     storage_note = (
-        "the CME maximum storage rate in effect that day (corn/soybeans stepped from "
-        "16.5 to 26.5/100¢ in late 2019; SRW/HRW wheat move under Variable Storage Rates) "
-        "and "
+        "storage at the CME rate each spread is carried under — the rate in force from the "
+        "19th of its near delivery month to the 19th of its far one (for SRW/HRW that is "
+        "set by the spread's own VSR observation window), and "
         if storage_rates.has_schedule(product_code)
         else ""
     )
     return st.toggle(
         "Historical rates", value=True, key=key,
-        help=f"Price each past session's % of full carry at {storage_note}that day's "
-        f"effective fed funds + {FED_FUNDS_SPREAD_PCT:.2f}%. Off applies today's rates to "
-        "every date.",
+        help=f"Price {storage_note}interest at each session's effective fed funds + "
+        f"{FED_FUNDS_SPREAD_PCT:.2f}%. Off applies today's rates to every date.",
     )
 
 
 def pair_rate_kwargs(historical: bool, mode: str, product_code: str) -> dict:
     """build_pair_series arguments for the chosen rate treatment. Fed funds is only
     fetched when it will actually be used — % of full carry with history switched on."""
-    use = historical and mode == "carry"
+    # Storage history applies in both measures, because the reference lines on a nominal
+    # chart are drawn at the pair's full storage too. Interest history only matters for
+    # the % of full carry series.
     return {
         "product_code": product_code,
-        "historical_storage": use,
-        "fed_funds": fed_funds_history() if use else None,
+        "historical_storage": historical,
+        "fed_funds": fed_funds_history() if historical and mode == "carry" else None,
     }
 
 
@@ -691,12 +706,17 @@ def build_pair_series(hist: dict, near: str, far: str, mode: str,
     seasonal alignment uses the real expiry where we know it — otherwise the current
     year sits weeks out of step with the expired analogs.
 
-    With `historical_storage`, % of full carry prices each session at the CME storage
-    rate in effect that day (see storage_rates.py) rather than today's rate. Passing
-    `fed_funds` does the same for interest: that day's effective fed funds plus
-    `rate_spread_pct` (see interest_rates.py). The returned `storage_full` and
-    `interest_full` stay at today's rates either way, because they feed the reference
-    lines, which are drawn at today's level."""
+    With `historical_storage`, storage is priced at the CME rate the spread is actually
+    carried under — the average across its carry window, from the 19th of the near
+    delivery month to the 19th of the far one (see storage_rates.carry_window). That rate
+    belongs to the pair, so it is one constant for the whole line: the storage a Dec/Mar
+    spread pays is set by the Dec-Mar VSR observation, whatever date it is viewed on.
+    The returned `storage_full` uses the same rate, so reference lines agree with the line.
+
+    Passing `fed_funds` prices interest per session instead: that day's effective fed
+    funds plus `rate_spread_pct` (see interest_rates.py) — financing is paid at the rate of
+    the day, as in CME's own VSR calculation. `interest_full` stays at today's rate for
+    the reference lines."""
     blank = (None, None, None, None, None)
     near_h, far_h = hist.get(near), hist.get(far)
     if near_h is None or far_h is None or not len(near_h) or not len(far_h):
@@ -713,8 +733,12 @@ def build_pair_series(hist: dict, near: str, far: str, mode: str,
         return blank
 
     near_prices = near_h.reindex(spread.index)
+    pair_storage_rate = storage_rate
+    if historical_storage and product_code and storage_rates.has_schedule(product_code):
+        pair_storage_rate = storage_rates.carry_rate(product_code, near_expiry, far_expiry,
+                                                     storage_rate)
     storage_full, interest_latest = carry_components(
-        float(near_prices.iloc[-1]), days, storage_rate, annual_rate, multiplier
+        float(near_prices.iloc[-1]), days, pair_storage_rate, annual_rate, multiplier
     )
     if mode == "nominal":
         return spread, near_expiry, far_expiry, storage_full, interest_latest
@@ -727,15 +751,7 @@ def build_pair_series(hist: dict, near: str, far: str, mode: str,
         interest_series = near_prices * daily_annual * days / 360
     else:
         interest_series = near_prices * annual_rate * days / 360
-    if historical_storage and product_code and storage_rates.has_schedule(product_code):
-        daily_rates = pd.Series(
-            storage_rates.rates_on(product_code, list(spread.index), storage_rate),
-            index=spread.index,
-        )
-        storage_term = days * daily_rates * multiplier
-    else:
-        storage_term = storage_full
-    pct = (spread / -(storage_term + interest_series))
+    pct = (spread / -(storage_full + interest_series))
     pct = pct.replace([float("inf"), float("-inf")], pd.NA).dropna()
     return pct, near_expiry, far_expiry, storage_full, interest_latest
 
@@ -916,7 +932,7 @@ def render_charts(commodity: dict, table: pd.DataFrame, history: dict, curve: pd
                     f"{MONTH_LETTERS[far_letter]} {expiries[far].year - back}"
                     + (" (current)" if back == 0 else ""))
             color = SEASONAL_COLORS[back % len(SEASONAL_COLORS)]
-            vsr = vsr_line_style(code, n_exp, as_of, vsr_shades)
+            vsr = vsr_line_style(code, n_exp, _f_exp, vsr_shades)
             if vsr:
                 color, suffix = vsr
                 name += suffix
@@ -1621,7 +1637,7 @@ def render_seasonal_pair(commodity: dict, near: str, far: str, api_key: str, as_
         name = display
         color = BUILDER_COLORS[back % len(BUILDER_COLORS)]
         legend = name + (" (current)" if back == 0 else "")
-        vsr = vsr_line_style(code, near_exp, as_of, vsr_shades)
+        vsr = vsr_line_style(code, near_exp, _far_exp, vsr_shades)
         if vsr:
             color, suffix = vsr
             legend += suffix
