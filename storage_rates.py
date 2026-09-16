@@ -104,6 +104,31 @@ def rates_on(product_code: str, dates, fallback: float) -> list[float]:
     return out
 
 
+# Markets whose storage rate moves under the Variable Storage Rate mechanism. Corn and
+# soybeans have fixed maximums, so they have no VSR level.
+VSR_PRODUCTS = ("ZW", "KE")
+VSR_FLOOR = 0.00165   # VSR 1: 16.5/100 of a cent per bushel per day, ~5 cents/month
+VSR_STEP = 0.00100    # each level adds 10/100 of a cent per day, ~3 cents/month
+
+
+def vsr_level(product_code: str, on: date) -> int | None:
+    """VSR level in effect on `on`: 1 = 16.5/100 (~5c/mo), 2 = 26.5 (~8c/mo),
+    3 = 36.5 (~11c/mo), and so on — numbered by absolute rate, not steps above the
+    floor, so a level keeps its meaning after the Dec 2026 minimum increase.
+    None for non-VSR markets or dates outside the schedule."""
+    if product_code not in VSR_PRODUCTS:
+        return None
+    rate = rate_on(product_code, on)
+    if rate is None:
+        return None
+    return int(round((rate - VSR_FLOOR) / VSR_STEP)) + 1
+
+
+def cents_per_month(rate: float) -> int:
+    """16.5/100 of a cent per day -> 5 cents per bushel per month, as CME quotes it."""
+    return int(round(rate * 100 * 30))
+
+
 def changes_between(product_code: str, start: date, end: date) -> list[tuple[date, float]]:
     """Rate steps that take effect inside [start, end] — for marking them on charts."""
     return [(d, r) for d, r in SCHEDULE.get(product_code, ()) if start <= d <= end]

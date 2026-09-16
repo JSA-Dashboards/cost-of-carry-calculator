@@ -103,6 +103,15 @@ lines stay at today's storage and interest levels either way.
 Known limit: wheat storage between Mar 2021 and Apr 2022 is bracketed at the 16.5 floor at
 both ends rather than individually verified.
 
+**VSR colouring (wheat).** On SRW and HRW seasonal charts — per-market tabs and the Spread
+Builder — each crop year's line is coloured by its VSR level: green **VSR 1** (16.5/100¢,
+~5¢/month), orange **VSR 2** (26.5, ~8¢), red **VSR 3** (36.5, ~11¢), with the level in the
+legend. A year is classed by the level in effect at its near leg's expiration, since VSR
+can change mid-year (SRW moved three times in 2023-24); a contract still trading uses
+today's level. Years sharing a level get successively lighter shades so they stay
+distinguishable. Levels are numbered by absolute rate, so they keep their meaning after
+the December 2026 minimum increase.
+
 ### Snowflake configuration
 
 Set these as Streamlit Cloud secrets (or in a local, gitignored `.env`):

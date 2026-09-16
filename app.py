@@ -501,6 +501,43 @@ SEASONAL_YEARS_BACK = 4
 # of data past ~5 years back and the loop already skips those gracefully.
 DEEP_SEASONAL_YEARS_BACK = 18
 SEASONAL_COLORS = ["#0693e3", "#e8833a", "#5aa469", "#b05fb0", "#9aa5b1"]
+
+# Wheat seasonal lines are coloured by VSR level so regimes read at a glance: a colour
+# family per level, darkest shade first, stepping lighter for each further year that
+# shares the level so the years stay distinguishable.
+VSR_PALETTES = {
+    1: ["#1b5e20", "#388e3c", "#66bb6a", "#81c784", "#a5d6a7"],   # VSR 1 greens
+    2: ["#bf360c", "#e65100", "#fb8c00", "#ffa726", "#ffcc80"],   # VSR 2 oranges
+    3: ["#8e0000", "#c62828", "#e53935", "#ef5350", "#ef9a9a"],   # VSR 3 reds
+}
+VSR_PALETTE_BEYOND = ["#4a148c", "#6a1b9a", "#8e24aa", "#ab47bc", "#ce93d8"]  # 4+ purples
+
+
+def vsr_line_style(product_code: str, near_expiry: date, as_of: date,
+                   shades_used: dict[int, int]) -> tuple[str, str] | None:
+    """(colour, legend suffix) for one seasonal year of a VSR market, or None otherwise.
+
+    A crop year is classed by the VSR level in effect at its near leg's expiration — the
+    storage rate that spread traded under into delivery. A contract still trading is
+    classed by today's level, since its expiry-day rate isn't settled yet. Mutates
+    `shades_used` to hand out the next shade within each level."""
+    level = storage_rates.vsr_level(product_code, min(near_expiry, as_of))
+    if level is None:
+        return None
+    palette = VSR_PALETTES.get(level, VSR_PALETTE_BEYOND)
+    shade = shades_used.get(level, 0)
+    shades_used[level] = shade + 1
+    rate = storage_rates.rate_on(product_code, min(near_expiry, as_of))
+    return palette[shade % len(palette)], f" · VSR {level} ({storage_rates.cents_per_month(rate)}¢)"
+
+
+def vsr_legend_caption(product_code: str) -> str:
+    """One-line key for the VSR colouring, shown under wheat seasonal charts."""
+    if product_code not in storage_rates.VSR_PRODUCTS:
+        return ""
+    return (" Lines are coloured by VSR level at each year's near-leg expiration — "
+            "green VSR 1 (5¢/mo), orange VSR 2 (8¢), red VSR 3 (11¢); a still-trading "
+            "contract uses today's level.")
 RANGE_CHOICES = {"1Y": 365, "2Y": 730, "All": None}
 REF_STORAGE_COLOR = "#8d6e63"
 REF_INTEREST_COLOR = "#7986cb"
@@ -861,6 +898,7 @@ def render_charts(commodity: dict, table: pd.DataFrame, history: dict, curve: pd
         fig = go.Figure()
         drawn = 0
         by_dte: dict[str, pd.Series] = {}
+        vsr_shades: dict[int, int] = {}
         for back in range(years_back + 1):
             n = deep_year_key(code, near_letter, expiries[near].year - back)
             f = deep_year_key(code, far_letter, expiries[far].year - back)
@@ -877,10 +915,14 @@ def render_charts(commodity: dict, table: pd.DataFrame, history: dict, curve: pd
             name = (f"{MONTH_LETTERS[near_letter]} {expiries[near].year - back} / "
                     f"{MONTH_LETTERS[far_letter]} {expiries[far].year - back}"
                     + (" (current)" if back == 0 else ""))
+            color = SEASONAL_COLORS[back % len(SEASONAL_COLORS)]
+            vsr = vsr_line_style(code, n_exp, as_of, vsr_shades)
+            if vsr:
+                color, suffix = vsr
+                name += suffix
             fig.add_trace(go.Scatter(
                 x=[days_out[i] for i in keep], y=[s.values[i] for i in keep], mode="lines", name=name,
-                line=dict(color=SEASONAL_COLORS[back % len(SEASONAL_COLORS)],
-                          width=3 if back == 0 else 1.5),
+                line=dict(color=color, width=3 if back == 0 else 1.5),
                 opacity=1.0 if back == 0 else 0.7,
                 hovertemplate=f"{name}<br>%{{x}}d to expiry<br>%{{y:{fmt}}}<extra></extra>",
             ))
@@ -925,6 +967,7 @@ def render_charts(commodity: dict, table: pd.DataFrame, history: dict, curve: pd
             st.caption(
                 f"{drawn} crop year{'s' if drawn != 1 else ''} overlaid · x = 0 is the near leg's "
                 "expiration, so each year lines up at the same point in its life."
+                + vsr_legend_caption(code)
             )
 
     st.caption(
@@ -1549,6 +1592,7 @@ def render_seasonal_pair(commodity: dict, near: str, far: str, api_key: str, as_
     by_dte: dict[str, pd.Series] = {}
     storage_full = interest_full = None
     skipped: list[str] = []
+    vsr_shades: dict[int, int] = {}
 
     for back in range(years_back + 1):
         n = deep_year_key(code, near_letter, expiries[near].year - back)
@@ -1575,10 +1619,15 @@ def render_seasonal_pair(commodity: dict, near: str, far: str, api_key: str, as_
         xs = [anchor_expiry + timedelta(days=dte[i]) for i in keep]
         ys = [series.values[i] for i in keep]
         name = display
+        color = BUILDER_COLORS[back % len(BUILDER_COLORS)]
+        legend = name + (" (current)" if back == 0 else "")
+        vsr = vsr_line_style(code, near_exp, as_of, vsr_shades)
+        if vsr:
+            color, suffix = vsr
+            legend += suffix
         fig.add_trace(go.Scatter(
-            x=xs, y=ys, mode="lines", name=name + (" (current)" if back == 0 else ""),
-            line=dict(color=BUILDER_COLORS[back % len(BUILDER_COLORS)],
-                      width=3.5 if back == 0 else 1.6),
+            x=xs, y=ys, mode="lines", name=legend,
+            line=dict(color=color, width=3.5 if back == 0 else 1.6),
             opacity=1.0 if back == 0 else 0.8,
             hovertemplate=f"{name}<br>%{{y:{fmt}}}<extra></extra>",
         ))
@@ -1652,6 +1701,7 @@ def render_seasonal_pair(commodity: dict, near: str, far: str, api_key: str, as_
         # Name the backend so a silent fallback to the committed CSV is visible.
         src = {"snowflake": "Snowflake", "csv": "the local CSV", "none": "no archive"}
         note += f" Pre-2022 years served from {src.get(archive_source(), archive_source())}."
+    note += vsr_legend_caption(code)
     st.caption(note)
 
 
