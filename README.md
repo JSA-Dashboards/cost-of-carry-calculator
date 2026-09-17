@@ -92,6 +92,7 @@ it's one constant for the whole line whatever date the spread is viewed on:
 | Soybeans | 16.5 → **26.5** from 11/19/2019 (SER-8198RRR) |
 | Chicago SRW | VSR: 16.5 → 26.5 (9/19/2023) → 16.5 (3/19/2024) → 26.5 (5/19/2024) → 16.5 (3/19/2026) → 26.5 (12/19/2026, new minimum) |
 | KC HRW | VSR: 16.5 → 26.5 (5/19/2025) → 16.5 (7/19/2026) → 26.5 (12/19/2026, new minimum) |
+| MGEX HRS | VSR, 26.5 floor: 26.5 → 36.5 (9/19/2025, SER-9605) → 26.5 (9/19/2026, SER-9809); not on record before Jul 2025 |
 
 Both wheats' minimum rises to 26.5 after the December 2026 contracts expire, regardless of
 that period's VSR result (SER-9809). Every wheat step comes from a CME VSR results notice,
@@ -123,7 +124,7 @@ can differ from the figure in CME's notice whenever that window produced a chang
 Known limit: wheat storage between Mar 2021 and Apr 2022 is bracketed at the 16.5 floor at
 both ends rather than individually verified.
 
-**VSR colouring (wheat).** On SRW and HRW seasonal charts — per-market tabs and the Spread
+**VSR colouring (wheat).** On SRW, HRW and HRS seasonal charts — per-market tabs and the Spread
 Builder — each crop year's line is coloured by the VSR level governing its carry window:
 green **VSR 1** (16.5, ~5¢/month), orange **VSR 2** (26.5, ~8¢), red **VSR 3** (36.5, ~11¢),
 with the level in the legend. A spread straddling a change is labelled e.g. *VSR 2→1* and
