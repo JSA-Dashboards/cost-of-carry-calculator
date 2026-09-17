@@ -25,6 +25,7 @@ follows the workbook: green >= 75%, yellow 50-74%, red < 50%.
 | --- | --- |
 | **Summary** | All seven markets stacked in the workbook's layout, two-digit contract labels, one interest rate driving every market. |
 | **Spread Builder** | Free-form seasonal chart: pick market, both legs, measure, and overlay prior crop years on a shared calendar axis with an average line. |
+| **Spread Builder — Seasonal outlook** | Moore Research-style chart under the seasonal overlay: the live spread against its 15-year pattern projected to expiration, with 15- and 5-year patterns as 0–100 indexes (`seasonal_pattern.py`). |
 | **VSR Tracker** | Variable Storage Rate observation windows for SRW, HRW and HRS: running average against the 50% / 80% thresholds, projected rate, and CME's published history. |
 | **Per-market tabs** | Full spread matrix with 12-month spread high/low and dates, plus history and seasonal charts. |
 
