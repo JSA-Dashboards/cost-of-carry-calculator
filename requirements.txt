@@ -11,3 +11,5 @@ python-dotenv>=1.0
 
 # Exchange holiday calendar for VSR observation-window dates.
 holidays>=0.50
+# IANA time zones for America/Chicago where the OS has none (Windows).
+tzdata
