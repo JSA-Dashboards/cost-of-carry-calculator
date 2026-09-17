@@ -25,6 +25,7 @@ follows the workbook: green >= 75%, yellow 50-74%, red < 50%.
 | --- | --- |
 | **Summary** | All seven markets stacked in the workbook's layout, two-digit contract labels, one interest rate driving every market. |
 | **Spread Builder** | Free-form seasonal chart: pick market, both legs, measure, and overlay prior crop years on a shared calendar axis with an average line. |
+| **VSR Tracker** | Variable Storage Rate observation windows for SRW, HRW and HRS: running average against the 50% / 80% thresholds, projected rate, and CME's published history. |
 | **Per-market tabs** | Full spread matrix with 12-month spread high/low and dates, plus history and seasonal charts. |
 
 Markets: corn (ZC), soybeans (ZS), soybean meal (ZM), soybean oil (ZL), Chicago/SRW wheat
@@ -130,6 +131,36 @@ coloured by the level covering more of its window; one reaching past the last pu
 determination is marked *pending*. Years sharing a level get successively lighter shades.
 Levels are numbered by absolute rate, so they keep their meaning after the December 2026
 minimum increase.
+
+### VSR tracker
+
+`vsr_tracker.py` reproduces CME's VSR calculator for each observation window:
+
+```
+carry days  = far first delivery day - near first delivery day
+full carry  = days x (INT / 100 / 360 x near price + storage)      $/bu
+daily %     = (far - near) / full carry
+result      = simple average over the window: >= 80% up, <= 50% down, else unchanged
+```
+
+- **Windows.** The nearby spread for month M is observed from the 19th of the previous
+  delivery month (next business day) through M's option expiration (last Friday at least
+  two business days before the last business day of the prior month). The new rate
+  applies from the 19th of M. Dates match CME's published windows for Mar '21, Mar '23,
+  Mar '26, Jul '26 and Sep '26; the calendar uses NYSE holidays via `holidays`.
+- **Storage** is the maximum rate in force when the window opens. Minimums: SRW/HRW 16.5,
+  26.5 after the Dec 2026 contracts expire (so the Dec '26 window's outcome is fixed at
+  26.5); HRS 26.5.
+- **INT** is 3M CME Term SOFR + 221.25bp. Term SOFR is CME-licensed, so it's taken from
+  the SR3 futures strip, interpolated to a settlement date 91 days out — within ~0.02pp of
+  Term SOFR on most days in Jul–Aug 2026. Sessions with no SR3 settlement fall back to
+  effective fed funds + 0.15pp.
+- **Accuracy.** Twelve SRW/HRW windows, Sep 2023 – Sep 2026, landed within 0.9pt of CME's
+  published average, most within 0.1pt. HRS is thin on Massive (sessions missing when a
+  leg didn't trade), so its averages can be a few points off and the tab says so.
+- **Open windows** show the running average, projected rate, and the average the remaining
+  sessions need to finish at 80% or 50%. Between windows, the next spread is previewed over
+  the last four weeks. Add each new CME results notice to `PUBLISHED`.
 
 ### Snowflake configuration
 

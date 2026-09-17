@@ -1,4 +1,5 @@
 import base64
+import dataclasses
 import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -9,6 +10,7 @@ import streamlit as st
 
 import interest_rates
 import storage_rates
+import vsr_tracker
 
 from history_archive import ARCHIVE_CUTOFF_YEAR, archive_source, load_price_archive
 from massive_api import (MassiveApiError, get_fed_funds_rate, get_futures_curve,
@@ -1382,6 +1384,303 @@ def render_crush(api_key: str, as_of: date):
             st.caption(f"{drawn} crop year{'s' if drawn != 1 else ''} overlaid, aligned on the bean leg's expiration.")
 
 
+# ── VSR tracker ──────────────────────────────────────────────────────────────
+VSR_BAND_COLORS = {"decrease": "rgba(198,40,40,0.08)", "no change": "rgba(120,144,156,0.06)",
+                   "increase": "rgba(90,164,105,0.12)"}
+VSR_ZONE_CHIP = {
+    "increase": "background-color:#CDEFCD;color:#1f3d1f;",
+    "no change": "background-color:#eceff1;color:#37474f;",
+    "decrease": "background-color:#F8D0D0;color:#7a1d1d;",
+}
+VSR_ZONE_TEXT = {"increase": "≥ 80% · rate rises", "no change": "50–80% · no change",
+                 "decrease": "≤ 50% · rate falls"}
+VSR_HISTORY_START = date(2021, 1, 1)
+VSR_PREVIEW_DAYS = 28
+
+
+def vsr_rate_label(rate: float) -> str:
+    """0.00165 -> '16.5 (5¢/mo)', the way CME quotes the storage rate."""
+    return f"{rate * 10000:.1f} ({vsr_tracker.cents_per_month(rate)}¢/mo)"
+
+
+@st.cache_data(ttl="1h", show_spinner="Loading VSR observation window…")
+def load_vsr_table(product: str, near_letter: str, near_year: int, api_key: str, as_of: str,
+                   preview: bool = False) -> pd.DataFrame:
+    """Daily CME-method % of financial full carry for one window.
+
+    `preview` prices an upcoming window's spread over the trailing few weeks instead of
+    its (future) observation dates — same spread, storage and carry days, as if the
+    window had opened a month ago."""
+    window = vsr_tracker.build_window(product, near_letter, near_year)
+    if preview:
+        today = date.fromisoformat(as_of)
+        window = dataclasses.replace(window, start=today - timedelta(days=VSR_PREVIEW_DAYS), end=today)
+    sr3 = vsr_tracker.sr3_contracts_for(window)
+    hist = get_settlement_histories([window.near_ticker, window.far_ticker] + list(sr3), api_key)
+    empty = pd.Series(dtype=float)
+    sr3_hist = {t: hist.get(t, empty) for t in sr3}
+    fed_funds = fed_funds_history()
+
+    def base_rate(day):
+        rate = vsr_tracker.term_rate_from_sr3(sr3_hist, sr3, day)
+        if rate is not None:
+            return rate, "SR3"
+        rate = vsr_tracker.term_rate_from_fed_funds(fed_funds, day)
+        return (rate, "fed funds") if rate is not None else (None, None)
+
+    return vsr_tracker.daily_table(window, hist.get(window.near_ticker, empty),
+                                   hist.get(window.far_ticker, empty), base_rate)
+
+
+def _vsr_zone_chip(zone: str | None) -> str:
+    if not zone:
+        return ""
+    return (f'<span style="{VSR_ZONE_CHIP[zone]}padding:2px 10px;border-radius:4px;'
+            f'font-size:0.82rem;font-weight:600;white-space:nowrap;">{VSR_ZONE_TEXT[zone]}</span>')
+
+
+def _vsr_outcome_locked(window) -> bool:
+    """True when a minimum-rate change fixes the result whatever the spread does — e.g.
+    the Dec '26 window, where the new 26.5 minimum applies on Dec 19 either way."""
+    return vsr_tracker.projected_rate(window, 0.0) == vsr_tracker.projected_rate(window, 1.0)
+
+
+def vsr_market_card(product: str, api_key: str, as_of: date):
+    meta = vsr_tracker.MARKETS[product]
+    active = vsr_tracker.current_window(product, as_of)
+    earlier = [w for w in vsr_tracker.windows_between(product, as_of - timedelta(days=150), as_of)
+               if w.end < active.start]
+    previous = earlier[-1] if earlier else None
+    status = active.status(as_of)
+
+    with st.container(border=True):
+        st.markdown(f"**{meta['label']}** · storage now "
+                    f"**{vsr_rate_label(vsr_tracker.rate_on(product, as_of))}**")
+        st.caption(f"{'Open' if status == 'open' else 'Next'} window: **{active.label}** · "
+                   f"{active.start:%b %d} – {active.end:%b %d, %Y} · new rate from {active.effective:%b %d}")
+        if status == "open":
+            table = load_vsr_table(product, active.near_letter, active.near_year, api_key, as_of.isoformat())
+            s = vsr_tracker.summarize(active, table, as_of)
+            if s["avg"] is None:
+                st.info("No priced sessions yet.")
+            else:
+                st.metric("Running average", f"{s['avg']:.2%}",
+                          f"{s['sessions_observed']} of {s['sessions_total']} sessions", delta_color="off", delta_arrow="off")
+                st.markdown(_vsr_zone_chip(s["zone"]), unsafe_allow_html=True)
+                st.caption(f"Projected rate: **{vsr_rate_label(s['projected_rate'])}**")
+                if s["sessions_left"]:
+                    st.caption(f"The remaining {s['sessions_left']} sessions must average "
+                               f"**{s['needed_for_increase']:.0%}** to finish at 80%, or "
+                               f"**{s['needed_for_decrease']:.0%}** to finish at 50%.")
+        else:
+            table = load_vsr_table(product, active.near_letter, active.near_year, api_key,
+                                   as_of.isoformat(), preview=True)
+            if len(table):
+                avg = float(table["pct"].mean())
+                st.metric(f"Preview · last {len(table)} sessions", f"{avg:.2%}",
+                          f"window opens in {(active.start - as_of).days} days", delta_color="off", delta_arrow="off")
+                st.markdown(_vsr_zone_chip(vsr_tracker.zone(avg)), unsafe_allow_html=True)
+            else:
+                st.info("No recent prices for this spread.")
+        if _vsr_outcome_locked(active):
+            st.caption(f"Outcome fixed at **{vsr_rate_label(vsr_tracker.projected_rate(active, 0.0))}** "
+                       f"by the new minimum on {vsr_tracker.MIN_RAISE_DATE:%b %d, %Y}, whatever the average.")
+        if previous is not None:
+            published = vsr_tracker.PUBLISHED.get((product, previous.near_letter, previous.near_year))
+            if published is not None:
+                new_rate = vsr_tracker.projected_rate(previous, published / 100)
+                st.caption(f"Last result: **{previous.label}** averaged **{published:.2f}%** (CME) → "
+                           f"{vsr_tracker.zone(published / 100)}, {vsr_rate_label(new_rate)} "
+                           f"from {previous.effective:%b %d, %Y}.")
+
+
+def vsr_window_chart(window, table: pd.DataFrame, as_of: date):
+    fig = go.Figure()
+    values = (list(table["pct"]) + list(table["running_avg"])) if len(table) else []
+    lo = min([0.2] + values) - 0.1
+    hi = max([0.95] + values) + 0.1
+    for zone_name, y0, y1 in (("decrease", lo, vsr_tracker.DECREASE_AT),
+                              ("no change", vsr_tracker.DECREASE_AT, vsr_tracker.INCREASE_AT),
+                              ("increase", vsr_tracker.INCREASE_AT, hi)):
+        fig.add_shape(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=y0, y1=y1,
+                      fillcolor=VSR_BAND_COLORS[zone_name], line_width=0, layer="below")
+    for level, text, color in ((vsr_tracker.INCREASE_AT, "80%", REF_CARRY_COLOR),
+                               (vsr_tracker.DECREASE_AT, "50%", FND_COLOR)):
+        fig.add_shape(type="line", xref="paper", x0=0, x1=1, yref="y", y0=level, y1=level,
+                      line=dict(color=color, dash="dash", width=1.2))
+        fig.add_annotation(xref="paper", x=1.0, yref="y", y=level, text=text, showarrow=False,
+                           xanchor="left", font=dict(size=10, color=color))
+    if len(table):
+        x = [pd.Timestamp(d) for d in table["date"]]
+        fig.add_trace(go.Scatter(x=x, y=list(table["pct"]), mode="lines+markers", name="Daily %",
+                                 line=dict(color="#9aa5b1", width=1), marker=dict(size=5),
+                                 hovertemplate="%{y:.2%}<extra>daily</extra>"))
+        fig.add_trace(go.Scatter(x=x, y=list(table["running_avg"]), mode="lines", name="Running average",
+                                 line=dict(color="#0693e3", width=3),
+                                 hovertemplate="%{y:.2%}<extra>running avg</extra>"))
+    _style_axes(fig, "% of financial full carry", None, ".0%")
+    fig.update_layout(height=380)
+    fig.update_yaxes(range=[lo, hi])
+    fig.update_xaxes(range=[pd.Timestamp(window.start) - pd.Timedelta(days=1),
+                            pd.Timestamp(window.end) + pd.Timedelta(days=1)])
+    if window.start <= as_of <= window.end:
+        _add_vline(fig, as_of, "today", "#546e7a")
+    return fig
+
+
+def vsr_history_frame(product: str, as_of: date) -> pd.DataFrame:
+    rows = []
+    for w in vsr_tracker.windows_between(product, VSR_HISTORY_START, as_of):
+        published = vsr_tracker.PUBLISHED.get((product, w.near_letter, w.near_year))
+        if w.end >= as_of or published is None:
+            continue
+        rows.append({
+            "Spread": w.label,
+            "Observation": f"{w.start:%b %d, %Y} – {w.end:%b %d, %Y}",
+            "CME average %": published,
+            "Result": vsr_tracker.zone(published / 100),
+            "Rate before": vsr_rate_label(w.storage_rate),
+            "Rate after": vsr_rate_label(vsr_tracker.projected_rate(w, published / 100)),
+            "Effective": f"{w.effective:%b %d, %Y}",
+        })
+    return pd.DataFrame(rows[::-1])
+
+
+def render_vsr_tracker(api_key: str, as_of: date):
+    st.markdown("##### Variable Storage Rate tracker")
+    st.caption(
+        "Each nearby wheat spread (Mar/May, May/Jul, Jul/Sep, Sep/Dec, Dec/Mar) is observed from the "
+        "19th of the previous delivery month through the nearby option expiration. If its average % of "
+        "financial full carry is **≥ 80%** the maximum storage rate rises 10/100¢/bu/day; **≤ 50%** it "
+        "falls 10/100¢ (never below the minimum); in between it holds. The new rate applies from the "
+        "19th of the nearby delivery month. SRW and HRW minimums rise from 16.5 to **26.5** after the "
+        "December 2026 contracts expire."
+    )
+
+    cards = st.columns(len(vsr_tracker.MARKETS))
+    for col, product in zip(cards, vsr_tracker.MARKETS):
+        with col:
+            try:
+                vsr_market_card(product, api_key, as_of)
+            except MassiveApiError as e:
+                st.error(f"{vsr_tracker.MARKETS[product]['label']}: {e}")
+
+    st.divider()
+    controls = st.container(horizontal=True, vertical_alignment="bottom")
+    with controls:
+        product = st.segmented_control(
+            "Market", list(vsr_tracker.MARKETS), default="ZW", key="vsr_market",
+            format_func=lambda p: vsr_tracker.MARKETS[p]["label"]) or "ZW"
+        # Windows that have opened, newest first — the open one (if any) leads.
+        windows = [w for w in vsr_tracker.windows_between(product, as_of - timedelta(days=730), as_of)
+                   if w.start <= as_of][::-1]
+        window = st.selectbox(
+            "Observation window", windows, index=0, key=f"vsr_window_{product}", width=420,
+            format_func=lambda w: (f"{w.label} · {w.start:%b %d} – {w.end:%b %d, %Y}"
+                                   + (" · open" if w.status(as_of) == "open" else "")))
+    if window is None:
+        st.info("No observation windows to show.")
+        return
+
+    table = load_vsr_table(product, window.near_letter, window.near_year, api_key, as_of.isoformat())
+    s = vsr_tracker.summarize(window, table, as_of)
+    published = vsr_tracker.PUBLISHED.get((product, window.near_letter, window.near_year))
+
+    with st.container(horizontal=True):
+        st.metric("Running average" if s["status"] == "open" else "Tracker average",
+                  "—" if s["avg"] is None else f"{s['avg']:.2%}",
+                  f"{s['sessions_observed']} of {s['sessions_total']} sessions", delta_color="off", delta_arrow="off", border=True)
+        if published is not None:
+            st.metric("CME published", f"{published:.2f}%",
+                      None if s["avg"] is None else f"tracker {s['avg'] * 100 - published:+.2f} pts",
+                      delta_color="off", delta_arrow="off", border=True)
+        st.metric("Storage in the calculation", vsr_rate_label(window.storage_rate),
+                  f"{window.carry_days} carry days", delta_color="off", delta_arrow="off", border=True)
+        if s["avg"] is not None:
+            outcome_avg = published / 100 if published is not None else s["avg"]
+            st.metric(f"Rate from {window.effective:%b %d, %Y}",
+                      vsr_rate_label(vsr_tracker.projected_rate(window, outcome_avg)),
+                      VSR_ZONE_TEXT[vsr_tracker.zone(outcome_avg)] + ("" if published is not None else " (projected)"),
+                      delta_color="off", delta_arrow="off", border=True)
+        if s["sessions_left"]:
+            st.metric(f"Needed over the last {s['sessions_left']} sessions",
+                      f"{s['needed_for_increase']:.0%} → 80%",
+                      f"{s['needed_for_decrease']:.0%} → 50%", delta_color="off", delta_arrow="off", border=True)
+
+    if product == "HRS":
+        st.warning("MGEX spring wheat trades thinly and the Massive feed skips sessions where a leg didn't "
+                   "trade, so HRS averages use only sessions with both legs priced and can differ from CME's "
+                   "result by a few points.", icon="⚠️")
+    elif s["status"] == "closed" and 0 < s["sessions_observed"] < s["sessions_total"]:
+        st.caption(f"{s['sessions_total'] - s['sessions_observed']} session(s) in this window have no "
+                   "settlement for one leg in the feed and are left out of the average.")
+
+    fig = vsr_window_chart(window, table, as_of)
+    slug = f"vsr_{product}_{window.near_letter}{window.near_year}"
+    st.plotly_chart(fig, width="stretch", key=f"chart_{slug}", config=plotly_config(slug))
+
+    if len(table):
+        display = pd.DataFrame({
+            "Date": [f"{d:%m/%d/%Y}" for d in table["date"]],
+            f"{window.near_ticker} $/bu": table["near"].round(4),
+            f"{window.far_ticker} $/bu": table["far"].round(4),
+            "INT %": table["int_pct"].round(4),
+            "Full carry $/bu": table["full_carry"].round(4),
+            "Spread $/bu": table["spread"].round(4),
+            "Daily %": table["pct"].round(4),
+            "Running avg": table["running_avg"].round(4),
+            "Rate source": table["rate_source"],
+        })
+        styler = display.style.format({
+            f"{window.near_ticker} $/bu": "{:.4f}", f"{window.far_ticker} $/bu": "{:.4f}",
+            "INT %": "{:.4f}", "Full carry $/bu": "{:.4f}", "Spread $/bu": "{:+.4f}",
+            "Daily %": "{:.2%}", "Running avg": "{:.2%}",
+        }).apply(lambda r: [GROUP_BAND if r.name % 2 == 0 else ""] * len(r), axis=1)
+        with st.container(key=f"tablewrap_{slug}"):
+            st.dataframe(styler, hide_index=True, width="stretch",
+                         height=min(36 * (len(display) + 1) + 3, 520))
+        export_row(display, slug, key=slug, fig=fig)
+
+    with st.expander("How the tracker calculates, and how close it gets to CME"):
+        st.markdown(
+            f"""
+Mirrors CME's VSR calculator, session by session:
+
+```
+carry days  = far first delivery day − near first delivery day      ({window.carry_days} for {window.label})
+full carry  = days × (INT ÷ 100 ÷ 360 × near price + storage)        $/bu
+daily %     = (far − near) ÷ full carry
+result      = simple average of the daily % across the window
+```
+
+- **Prices** are daily settlements from Massive (within ½¢ of CME's calculator on SRW/HRW).
+- **Storage** is the maximum rate in force when the window opens.
+- **INT** is 3-month CME Term SOFR + 221.25bp. Term SOFR is licensed by CME and isn't publicly
+  downloadable, so it's read off the **3-Month SOFR futures strip**: the implied rate interpolated at
+  a settlement date 91 days out, covering the same three months. Where a session has no SR3
+  settlement, effective fed funds + {vsr_tracker.DFF_TO_TERM_SOFR_PCT:.2f}pp stands in (see *Rate source*).
+- **Validation:** across twelve SRW/HRW windows from Sep 2023 to Sep 2026 the tracker landed within
+  0.9pt of CME's published average, most within 0.1pt (Sep '26: SRW 69.92% vs 69.85%, HRW 61.10% vs 61.03%).
+- Window dates follow CME's rule on a holiday-aware calendar; an unusual exchange closure can shift a
+  date by a session. CME's results notice is the final word.
+"""
+        )
+
+    st.markdown(f"###### {vsr_tracker.MARKETS[product]['label']} — VSR history (CME published results)")
+    history = vsr_history_frame(product, as_of)
+    if history.empty:
+        st.info("No published results on file for this market.")
+        return
+    hist_styler = history.style.format({"CME average %": "{:.2f}%"}).map(
+        lambda z: VSR_ZONE_CHIP.get(z, ""), subset=["Result"])
+    with st.container(key=f"tablewrap_vsr_history_{product}"):
+        st.dataframe(hist_styler, hide_index=True, width="stretch",
+                     height=min(36 * (len(history) + 1) + 3, 520))
+    export_row(history, f"vsr_history_{product}", key=f"vsr_history_{product}")
+    st.caption("Rates in 1/100¢ per bushel per day. Windows CME's notice index doesn't surface "
+               "(SRW/HRW Mar 2021 – Apr 2022, HRS before Sep 2025) are omitted.")
+
+
 def render_matrix(api_key: str, as_of: date, default_rate_pct: float):
     st.markdown("##### Spread matrix")
     st.caption(
@@ -1917,7 +2216,7 @@ hence the sign flip in the denominator.
 """
         )
 
-    tabs = st.tabs(["Summary", "Spread Builder", "Spread Matrix", "Crush"]
+    tabs = st.tabs(["Summary", "Spread Builder", "Spread Matrix", "Crush", "VSR Tracker"]
                    + [c["label"] for c in COMMODITIES])
     with tabs[0]:
         render_summary(api_key, as_of, default_rate_pct)
@@ -1927,7 +2226,9 @@ hence the sign flip in the denominator.
         render_matrix(api_key, as_of, default_rate_pct)
     with tabs[3]:
         render_crush(api_key, as_of)
-    for tab, commodity in zip(tabs[4:], COMMODITIES):
+    with tabs[4]:
+        render_vsr_tracker(api_key, as_of)
+    for tab, commodity in zip(tabs[5:], COMMODITIES):
         with tab:
             render_commodity(commodity, api_key, as_of, default_rate_pct)
 

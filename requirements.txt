@@ -8,3 +8,6 @@ kaleido==0.2.1
 # Snowflake backend for the pre-2021 history archive (USE_SNOWFLAKE=1).
 snowflake-connector-python>=3.12
 python-dotenv>=1.0
+
+# Exchange holiday calendar for VSR observation-window dates.
+holidays>=0.50
