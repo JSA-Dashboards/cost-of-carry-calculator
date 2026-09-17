@@ -1,4 +1,4 @@
-streamlit>=1.40
+streamlit>=1.56  # st.components.v2 (snapshot Copy button)
 pandas>=2.0.0
 requests>=2.31.0
 # Pinned: newer plotly/kaleido combinations silently break PNG export on Streamlit Cloud.

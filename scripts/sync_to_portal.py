@@ -27,7 +27,8 @@ PORTAL = Path(sys.argv[1]) if len(sys.argv) > 1 else SRC.parent / "jsa-home-page
 DEST = PORTAL / "apps" / "cost_of_carry"
 
 MODULES = ["massive_api", "storage_rates", "interest_rates", "vsr_tracker",
-           "history_archive", "snowflake_db", "seasonal_pattern"]
+           "history_archive", "snowflake_db", "seasonal_pattern",
+           "snapshot_copy"]
 DATA_FILES = ["fed_funds_dff.csv", "futures_history_archive.csv"]
 ASSETS = ["logo-50yr.png", "jsa_favicon.png", "logo-full.png"]
 

@@ -194,6 +194,16 @@ Create `.streamlit/secrets.toml` from the example and add your key:
 MASSIVE_API_KEY = "your-key-here"
 ```
 
+### Copy / CSV / PNG buttons
+
+**Copy** puts a PNG *snapshot* on the clipboard, ready to paste into Outlook, Teams or
+Excel — the styled table (colours, formats, watermark) or the chart, whichever the row
+belongs to. It is a `st.components.v2` component (`snapshot_copy.py`) that runs entirely
+in the browser: plotly.js or html2canvas is fetched from jsDelivr on the first click,
+draws the image off-screen, and hands it to `navigator.clipboard.write`. Where the
+clipboard API isn't available (non-HTTPS, older Firefox) the PNG downloads instead.
+CSV still exports the underlying numbers.
+
 ## Deploying to Streamlit Cloud
 
 Point the app at `app.py`, then add `MASSIVE_API_KEY` under **Settings -> Secrets**.
