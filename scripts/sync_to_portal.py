@@ -28,8 +28,9 @@ DEST = PORTAL / "apps" / "cost_of_carry"
 
 MODULES = ["massive_api", "storage_rates", "interest_rates", "vsr_tracker",
            "history_archive", "snowflake_db", "seasonal_pattern",
-           "snapshot_copy"]
-DATA_FILES = ["fed_funds_dff.csv", "futures_history_archive.csv"]
+           "snapshot_copy", "ethanol_grind"]
+DATA_FILES = ["fed_funds_dff.csv", "futures_history_archive.csv",
+              "ams_ethanol_weekly.csv", "ams_plant_corn.csv"]
 ASSETS = ["logo-50yr.png", "jsa_favicon.png", "logo-full.png"]
 
 
@@ -87,7 +88,9 @@ def main():
     if stale.exists():
         stale.unlink()
     for name in DATA_FILES:
-        shutil.copy2(SRC / "data" / name, DEST / "data" / name)
+        source = SRC / "data" / name
+        if source.exists():
+            shutil.copy2(source, DEST / "data" / name)
     for name in ASSETS:
         if (SRC / "assets" / name).exists():
             shutil.copy2(SRC / "assets" / name, DEST / "assets" / name)

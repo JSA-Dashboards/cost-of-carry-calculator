@@ -26,6 +26,7 @@ follows the workbook: green >= 75%, yellow 50-74%, red < 50%.
 | **Summary** | All seven markets stacked in the workbook's layout, two-digit contract labels, one interest rate driving every market. |
 | **Spread Builder** | Free-form seasonal chart: pick market, both legs, measure, and overlay prior crop years on a shared calendar axis with an average line. |
 | **Spread Builder — Seasonal outlook** | Moore Research-style chart under the seasonal overlay: the live spread against its 15-year pattern projected to expiration, with 15- and 5-year patterns as 0–100 indexes (`seasonal_pattern.py`). |
+| **Ethanol** | Dry-mill grind margin per bushel from USDA AMS cash prices (ethanol, distillers grain, corn oil, plant corn bids) and EIA Henry Hub gas, with editable yields (`ethanol_grind.py`). |
 | **VSR Tracker** | Variable Storage Rate observation windows for SRW, HRW and HRS: running average against the 50% / 80% thresholds, projected rate, and CME's published history. |
 | **Per-market tabs** | Full spread matrix with 12-month spread high/low and dates, plus history and seasonal charts. |
 
@@ -133,6 +134,39 @@ coloured by the level covering more of its window; one reaching past the last pu
 determination is marked *pending*. Years sharing a level get successively lighter shades.
 Levels are numbered by absolute rate, so they keep their meaning after the December 2026
 minimum increase.
+
+### Ethanol grind
+
+The **Ethanol** tab prices a dry mill's margin per bushel from cash markets
+(`ethanol_grind.py`):
+
+```
+revenue = gal_per_bu x ethanol($/gal)
+        + ddg_lb_per_bu/2000 x distillers grain($/ton)
+        + oil_lb_per_bu x corn oil($/lb)
+margin  = revenue - corn($/bu) - gas($/MMBtu) x MMBtu_per_gal x gal_per_bu - other costs
+```
+
+Yields default to 2.85 gal, 15.5 lb distillers grain, 0.75 lb corn oil and 0.024 MMBtu of
+gas per gallon; every one is editable, and *other costs* (power, enzymes, labour) defaults
+to zero so the headline is gross of everything but corn and gas.
+
+| Input | Source |
+| --- | --- |
+| Ethanol, distillers grain, distillers corn oil | USDA AMS *National Weekly Ethanol Report* (slug 3616), by state |
+| Corn | AMS *National Daily Ethanol Report* (slug 3617) plant bids, or CBOT futures |
+| Natural gas | EIA Henry Hub daily spot (`RNGWHHD`), or a fixed price you enter |
+
+**Why not futures.** CME's Chicago Ethanol (Platts) contract (CU) is on Massive but only a
+few months ever print and settlements exist only on days that traded, so it can't carry a
+forward grind. It appears as a collapsed forward check with each month's last trade date.
+Massive has no natural gas contracts under this entitlement, hence EIA.
+
+**Limits.** AMS answers short windows and rate-limits hard — one multi-year request hung
+for the better part of an hour — so history is fetched in chunks into committed snapshots
+(`data/ams_ethanol_weekly.csv`, `data/ams_plant_corn.csv`) and topped up live at runtime.
+Slug 3616 only returns rows from **March 2026**, so the weekly margin history starts there.
+Refresh with `python ethanol_grind.py`.
 
 ### VSR tracker
 
