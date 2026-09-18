@@ -27,6 +27,7 @@ snapshots (data/ams_ethanol_weekly.csv, data/ams_plant_corn.csv). Refresh with
 """
 from __future__ import annotations
 
+import os
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -34,7 +35,19 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-MARS_KEY = "oK/SXE39wQgbpn8SZanuHLkF6/GgstYl"
+
+def _key(name: str) -> str:
+    """API key from Streamlit secrets, else the environment. Never hardcoded: this repo
+    is public."""
+    try:
+        import streamlit as st
+
+        value = st.secrets.get(name, "")
+    except Exception:
+        value = ""
+    return value or os.environ.get(name, "")
+
+
 BASE_URL = "https://marsapi.ams.usda.gov/services/v1.2/reports"
 WEEKLY_SLUG = 3616
 DAILY_SLUG = 3617
@@ -52,8 +65,8 @@ DEFAULT_GAS_MMBTU_PER_GAL = 0.024  # thermal energy per gallon; a dry mill runs 
 DEFAULT_OPEX_PER_BU = 0.0      # power, enzymes, labour, denaturant — user's own number
 
 # Natural gas comes from EIA rather than the futures feed: Massive carries no NG contracts
-# under this entitlement. Henry Hub daily spot, $/MMBtu, public domain.
-EIA_KEY = "byhccqGIo65WWSSfpry5n3o3tMA66Z4Wf4oOwHpk"
+# under this entitlement. Henry Hub daily spot, $/MMBtu, public domain. Both this and the
+# AMS key are read from secrets (USDA_MARS_API_KEY, EIA_API_KEY).
 EIA_URL = "https://api.eia.gov/v2/natural-gas/pri/fut/data/"
 HENRY_HUB_SERIES = "RNGWHHD"
 
@@ -69,7 +82,7 @@ def source() -> str:
 def _get(slug: int, begin: date, end: date, timeout: float) -> list[dict]:
     resp = requests.get(
         f"{BASE_URL}/{slug}/Report%20Detail",
-        auth=(MARS_KEY, ""),
+        auth=(_key("USDA_MARS_API_KEY"), ""),
         params={"q": f"report_begin_date={begin:%m/%d/%Y}:{end:%m/%d/%Y}"},
         timeout=timeout,
     )
@@ -186,7 +199,7 @@ def henry_hub(start: date = date(2022, 1, 1), timeout: float = 30.0) -> pd.Serie
     """Henry Hub natural gas spot, $/MMBtu by date. Empty if EIA is unreachable."""
     try:
         resp = requests.get(EIA_URL, timeout=timeout, params={
-            "api_key": EIA_KEY, "frequency": "daily", "data[0]": "value",
+            "api_key": _key("EIA_API_KEY"), "frequency": "daily", "data[0]": "value",
             "facets[series][]": HENRY_HUB_SERIES, "start": start.isoformat(),
             "sort[0][column]": "period", "sort[0][direction]": "desc", "length": 5000,
         })

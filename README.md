@@ -157,6 +157,8 @@ to zero so the headline is gross of everything but corn and gas.
 | Corn | AMS *National Daily Ethanol Report* (slug 3617) plant bids, or CBOT futures |
 | Natural gas | EIA Henry Hub daily spot (`RNGWHHD`), or a fixed price you enter |
 
+Both feeds need a key in secrets (or the environment): `USDA_MARS_API_KEY` and `EIA_API_KEY`. Without them the tab falls back to the committed snapshots and a fixed gas price.
+
 **Why not futures.** CME's Chicago Ethanol (Platts) contract (CU) is on Massive but only a
 few months ever print and settlements exist only on days that traded, so it can't carry a
 forward grind. It appears as a collapsed forward check with each month's last trade date.
