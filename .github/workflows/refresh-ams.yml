@@ -33,7 +33,8 @@ jobs:
 
       - name: Load AMS prices into Snowflake
         env:
-          USDA_MARS_API_KEY: ${{ secrets.USDA_MARS_API_KEY }}
+          # Either name works: the repo's .env calls it MARS_API_KEY.
+          USDA_MARS_API_KEY: ${{ secrets.USDA_MARS_API_KEY || secrets.MARS_API_KEY }}
           USE_SNOWFLAKE: "1"
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
