@@ -1,0 +1,44 @@
+name: Refresh USDA AMS ethanol prices
+
+# Loads the National Weekly/Daily Ethanol Reports into Snowflake
+# (JSA.COST_OF_CARRY.AMS_ETHANOL_WEEKLY / AMS_PLANT_CORN) for the app's Ethanol tab.
+# AMS publishes the daily report around 6:30am CT and the weekly one on Fridays, so this
+# runs mid-morning Central on weekdays. Rows are MERGEd, so reruns are harmless.
+
+on:
+  schedule:
+    - cron: "30 15 * * 1-5"   # 15:30 UTC = 10:30am CDT / 9:30am CST
+  workflow_dispatch: {}        # "Run workflow" button for a manual refresh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-ams
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pandas requests "snowflake-connector-python>=3.12"
+
+      - name: Load AMS prices into Snowflake
+        env:
+          USDA_MARS_API_KEY: ${{ secrets.USDA_MARS_API_KEY }}
+          USE_SNOWFLAKE: "1"
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: JSA
+        run: python scripts/refresh_ams.py

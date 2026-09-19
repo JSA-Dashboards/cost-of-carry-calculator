@@ -164,11 +164,21 @@ few months ever print and settlements exist only on days that traded, so it can'
 forward grind. It appears as a collapsed forward check with each month's last trade date.
 Massive has no natural gas contracts under this entitlement, hence EIA.
 
-**Limits.** AMS answers short windows and rate-limits hard — one multi-year request hung
-for the better part of an hour — so history is fetched in chunks into committed snapshots
-(`data/ams_ethanol_weekly.csv`, `data/ams_plant_corn.csv`) and topped up live at runtime.
-Slug 3616 only returns rows from **March 2026**, so the weekly margin history starts there.
-Refresh with `python ethanol_grind.py`.
+**Storage and refresh.** AMS is slow and rate-limits hard — one multi-year request hung
+for the better part of an hour, and the daily report only answers ~10-day windows — so the
+app never queries it live when Snowflake is on. Prices live in
+`JSA.COST_OF_CARRY.AMS_ETHANOL_WEEKLY` and `AMS_PLANT_CORN`, loaded each weekday at 10:30am
+CT by the **Refresh USDA AMS ethanol prices** GitHub Action
+(`.github/workflows/refresh-ams.yml` → `scripts/refresh_ams.py`). It fetches only the days
+since the last load (plus a 10-day overlap for AMS revisions) and MERGEs on
+date/commodity/state/grade/transport, so reruns are harmless. `data/ams_*.csv` are a static
+fallback for when Snowflake is off or unreachable. Weekly data starts **March 2026** (all
+slug 3616 returns); plant bids start July 2025.
+
+The Action needs these repository secrets: `USDA_MARS_API_KEY`, `SNOWFLAKE_ACCOUNT`,
+`SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`, and optionally `SNOWFLAKE_ROLE` /
+`SNOWFLAKE_WAREHOUSE`. Run it on demand from the repo's **Actions** tab, or locally with
+`python scripts/refresh_ams.py` (`--seed` reloads the tables from the CSVs).
 
 ### VSR tracker
 
