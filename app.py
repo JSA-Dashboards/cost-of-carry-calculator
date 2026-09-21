@@ -595,7 +595,7 @@ DELAYED_QUOTES_NOTE = "Massive futures prices are delayed ~10 minutes — not a 
 
 DISCLAIMER_FOOTER_HTML = (
     '<hr style="border-color:#3a3a3a;margin-top:32px;margin-bottom:16px">'
-    '<div style="color:#888;font-size:0.68rem;line-height:1.6;text-align:center;padding:0 24px 24px;">'
+    '<div style="font-family:inherit;color:#888;font-size:0.68rem;line-height:1.6;text-align:center;padding:0 24px 24px;">'
     'Trading commodity futures, options on futures, cash commodities, and over-the-counter derivative '
     'products involves substantial risk of loss and may not be suitable for all investors. '
     'This communication is provided for informational purposes only and does not constitute investment '
@@ -2731,6 +2731,11 @@ def main():
         f"Data as of {datetime.now(EXCHANGE_TZ):%b %d, %Y %I:%M %p} CT · {DELAYED_QUOTES_NOTE}"
     )
 
+    # Placed here (before the tabs) rather than after them: every tab below is
+    # @st.fragment-wrapped, and content placed after a loop of fragment calls
+    # silently fails to render (reproduced locally — no exception, just dropped).
+    render_disclaimer_footer()
+
     api_key = get_api_key()
     if not api_key:
         st.error(
@@ -2828,8 +2833,6 @@ hence the sign flip in the denominator.
     for tab, commodity in zip(tabs[6:], COMMODITIES):
         with tab:
             render_commodity(commodity, api_key, as_of, default_rate_pct)
-
-    render_disclaimer_footer()
 
 
 if __name__ == "__main__":
