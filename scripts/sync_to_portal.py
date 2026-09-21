@@ -28,7 +28,7 @@ DEST = PORTAL / "apps" / "cost_of_carry"
 
 MODULES = ["massive_api", "storage_rates", "interest_rates", "vsr_tracker",
            "history_archive", "snowflake_db", "seasonal_pattern",
-           "snapshot_copy", "ethanol_grind"]
+           "snapshot_copy", "ethanol_grind", "stocks_use"]
 DATA_FILES = ["fed_funds_dff.csv", "futures_history_archive.csv",
               "ams_ethanol_weekly.csv", "ams_plant_corn.csv"]
 ASSETS = ["logo-50yr.png", "jsa_favicon.png", "logo-full.png"]
