@@ -6,8 +6,11 @@ name: Refresh USDA AMS ethanol prices
 # runs mid-morning Central on weekdays. Rows are MERGEd, so reruns are harmless.
 
 on:
-  schedule:
-    - cron: "30 15 * * 1-5"   # 15:30 UTC = 10:30am CDT / 9:30am CST
+  # Schedule disabled 2026-09-21 -- cron moved to the JSA Droplet (137.184.195.51).
+  # Re-enable by restoring the schedule block below if the Droplet ever goes away.
+  #
+  # schedule:
+  #   - cron: "30 15 * * 1-5"   # 15:30 UTC = 10:30am CDT / 9:30am CST
   workflow_dispatch: {}        # "Run workflow" button for a manual refresh
 
 permissions:
@@ -38,7 +41,8 @@ jobs:
           USE_SNOWFLAKE: "1"
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_PRIVATE_KEY_PWD: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PWD }}
           SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
           SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
           SNOWFLAKE_DATABASE: JSA
