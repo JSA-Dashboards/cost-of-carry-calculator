@@ -524,6 +524,8 @@ def render_commodity(commodity: dict, api_key: str, as_of: date, default_rate_pc
 
         render_charts(commodity, table, history, curve, api_key, as_of, storage_rate, annual_rate)
 
+    render_disclaimer_footer()
+
 
 SEASONAL_YEARS_BACK = 4
 # Corn/soybean calendar spreads can reach back through the CSV archive (contract years
@@ -595,7 +597,7 @@ DELAYED_QUOTES_NOTE = "Massive futures prices are delayed ~10 minutes — not a 
 
 DISCLAIMER_FOOTER_HTML = (
     '<hr style="border-color:#3a3a3a;margin-top:32px;margin-bottom:16px">'
-    '<div style="font-family:inherit;color:#888;font-size:0.68rem;line-height:1.6;text-align:center;padding:0 24px 24px;">'
+    '<div style="font-family:inherit;color:#888;font-size:inherit;line-height:1.6;text-align:center;padding:0 24px 24px;">'
     'Trading commodity futures, options on futures, cash commodities, and over-the-counter derivative '
     'products involves substantial risk of loss and may not be suitable for all investors. '
     'This communication is provided for informational purposes only and does not constitute investment '
@@ -1258,6 +1260,8 @@ def render_summary(api_key: str, as_of: date, default_rate_pct: float):
         summary_section(commodity, api_key, as_of, rate_pct)
         st.write("")
 
+    render_disclaimer_footer()
+
 
 MATRIX_METRICS = ["Market Carry", "Cost of Carry", "% Full Carry"]
 MATRIX_META = ["Symbol", "Month", "Price", ""]
@@ -1525,6 +1529,8 @@ def render_crush(api_key: str, as_of: date):
             st.plotly_chart(fig, width="stretch", key="crush_seasonal",
                             config=plotly_config("soybean_crush_seasonal"))
             st.caption(f"{drawn} crop year{'s' if drawn != 1 else ''} overlaid, aligned on the bean leg's expiration.")
+
+    render_disclaimer_footer()
 
 
 # ── VSR tracker ──────────────────────────────────────────────────────────────
@@ -1824,6 +1830,8 @@ result      = simple average of the daily % across the window
                styler=hist_styler)
     st.caption("Rates in 1/100¢ per bushel per day. Windows CME's notice index doesn't surface "
                "(SRW/HRW Mar 2021 – Apr 2022, HRS before Sep 2025) are omitted.")
+
+    render_disclaimer_footer()
 
 
 # ── Ethanol grind ────────────────────────────────────────────────────────────
@@ -2138,6 +2146,8 @@ def render_ethanol(api_key: str, as_of: date):
             "month with an old last-trade date is a stale print, not a live market."
         )
 
+    render_disclaimer_footer()
+
 
 @st.fragment
 def render_matrix(api_key: str, as_of: date, default_rate_pct: float):
@@ -2214,6 +2224,8 @@ def render_matrix(api_key: str, as_of: date, default_rate_pct: float):
         st.dataframe(styler, hide_index=True, width="stretch",
                      height=min(35 * (len(display) + 1) + 3, 900))
     export_row(display, f"spread_matrix_{commodity['key']}", key="matrix", styler=styler)
+
+    render_disclaimer_footer()
 
 
 MIN_BUILDER_LEGS = 2
@@ -2717,6 +2729,8 @@ def render_builder(api_key: str, as_of: date, default_rate_pct: float):
             "market — add/remove legs or switch every leg to one market to bring it back."
         )
 
+    render_disclaimer_footer()
+
 
 def main():
     col_logo, col_title = st.columns([1, 6], vertical_alignment="center")
@@ -2730,11 +2744,6 @@ def main():
         "Spreads are calculated arithmetically and may deviate from board quotes. "
         f"Data as of {datetime.now(EXCHANGE_TZ):%b %d, %Y %I:%M %p} CT · {DELAYED_QUOTES_NOTE}"
     )
-
-    # Placed here (before the tabs) rather than after them: every tab below is
-    # @st.fragment-wrapped, and content placed after a loop of fragment calls
-    # silently fails to render (reproduced locally — no exception, just dropped).
-    render_disclaimer_footer()
 
     api_key = get_api_key()
     if not api_key:
