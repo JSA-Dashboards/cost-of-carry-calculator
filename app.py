@@ -931,6 +931,10 @@ def build_pair_series(hist: dict, near: str, far: str, mode: str,
     the reference lines."""
     blank = (None, None, None, None, None)
     near_h, far_h = hist.get(near), hist.get(far)
+    if near_h is not None and near_h.index.has_duplicates:
+        near_h = near_h[~near_h.index.duplicated(keep='last')]
+    if far_h is not None and far_h.index.has_duplicates:
+        far_h = far_h[~far_h.index.duplicated(keep='last')]
     if near_h is None or far_h is None or not len(near_h) or not len(far_h):
         return blank
     spread = (near_h - far_h).dropna()
