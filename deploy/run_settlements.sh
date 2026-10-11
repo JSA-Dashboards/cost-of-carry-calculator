@@ -19,6 +19,8 @@ cd "$APP"
 git pull --quiet >> "$LOGFILE" 2>&1
 set -a; source .env; set +a
 .venv/bin/python scripts/refresh_settlements.py "$@" >> "$LOGFILE" 2>&1
+# Fastmarkets canola cash (oil fob LA, meal fob Velva) for the oilseed crush dashboard.
+.venv/bin/python scripts/refresh_canola_cash.py >> "$LOGFILE" 2>&1
 
 # Keep a month of logs; the archive's own history lives in Snowflake.
 find "$LOGDIR" -name 'settlements_*.log' -mtime +30 -delete
