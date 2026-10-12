@@ -3,7 +3,7 @@
 Feeds the Oilseeds Crush Margins dashboard's regional model:
   MARS 3511  National Grain and Oilseed Processor Feedstuff Report (weekly)
              -> JSA.COST_OF_CARRY.AMS_FEEDSTUFF   soybean meal, soybean oil, canola meal by region
-  MARS 3192 / 2850 / 3463 / 2851 / 3049  Illinois / Iowa / Indiana / Ohio / Southern Minnesota grain bids (daily)
+  MARS 3192 / 2850 / 3463 / 2851 / 3049 / 3225  Illinois / Iowa / Indiana / Ohio / Southern Minnesota / Nebraska bids (daily)
              -> JSA.COST_OF_CARRY.AMS_BEAN_BIDS   soybean bids by location and delivery point
 
 marsapi.ams.usda.gov rejects Streamlit Cloud's IPs, so this runs from the droplet (or a PC) and the app reads
@@ -24,7 +24,7 @@ BASE = "https://marsapi.ams.usda.gov/services/v1.2/reports"
 FEED_SLUG = 3511
 FEED_COMMODITIES = ("Soybean Meal", "Soybean Oil", "Canola Meal")
 FEED_FLOOR = date(2022, 2, 1)           # MARS' history for this report starts 2022-02-07
-BID_REPORTS = {"IL": 3192, "IA": 2850, "IN": 3463, "OH": 2851, "MN": 3049}
+BID_REPORTS = {"IL": 3192, "IA": 2850, "IN": 3463, "OH": 2851, "MN": 3049, "NE": 3225}
 BID_FLOOR = date(2020, 7, 1)
 
 FEED_TABLE, BID_TABLE = "AMS_FEEDSTUFF", "AMS_BEAN_BIDS"
@@ -126,10 +126,12 @@ def fetch_feedstuff(since: date, until: date | None = None) -> pd.DataFrame:
                               keep="last") if len(df) else df
 
 
-def fetch_bean_bids(since: date, until: date | None = None) -> pd.DataFrame:
+def fetch_bean_bids(since: date, until: date | None = None, states: list[str] | None = None) -> pd.DataFrame:
     until = until or date.today()
     out = []
     for state, slug in BID_REPORTS.items():
+        if states and state not in states:
+            continue
         for a, b in _windows(max(since, BID_FLOOR), until):
             for r in _rows(slug, a, b):
                 if r.get("commodity") != "Soybeans":
