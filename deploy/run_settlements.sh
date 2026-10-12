@@ -21,6 +21,9 @@ set -a; source .env; set +a
 .venv/bin/python scripts/refresh_settlements.py "$@" >> "$LOGFILE" 2>&1
 # Fastmarkets canola cash (oil fob LA, meal fob Velva) for the oilseed crush dashboard.
 .venv/bin/python scripts/refresh_canola_cash.py >> "$LOGFILE" 2>&1
+# USDA AMS meal/oil and soybean bids for the oilseed dashboard regional cash crush (needs MARS_API_KEY:
+# environment, or the beef-trimmings-dashboard .env it falls back to).
+.venv/bin/python scripts/refresh_ams_crush.py >> "$LOGFILE" 2>&1
 
 # Keep a month of logs; the archive's own history lives in Snowflake.
 find "$LOGDIR" -name 'settlements_*.log' -mtime +30 -delete
