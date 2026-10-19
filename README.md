@@ -24,7 +24,6 @@ follows the workbook: green >= 75%, yellow 50-74%, red < 50%.
 | Tab | Purpose |
 | --- | --- |
 | **Summary** | All seven markets stacked in the workbook's layout, two-digit contract labels, one interest rate driving every market. |
-| **Trends** | Snapshot of the two front months of every market: price change against a week, month and year ago (same contract), 20/100/200-day simple averages, and a Higher / Neutral / Weaker seasonal read for the next 30 days (`trend_board.py`, see below). |
 | **Spread Builder** | Free-form seasonal chart: pick market, both legs, measure, and overlay prior crop years on a shared calendar axis with an average line. |
 | **Spread Builder — Seasonal outlook** | Moore Research-style chart under the seasonal overlay: the live spread against its 15-year pattern projected to expiration, with 15- and 5-year patterns as 0–100 indexes (`seasonal_pattern.py`). |
 | **Ethanol** | Dry-mill grind margin per bushel from USDA AMS cash prices (ethanol, distillers grain, corn oil, plant corn bids) and EIA Henry Hub gas, with editable yields (`ethanol_grind.py`). |
@@ -67,31 +66,6 @@ otherwise falls back to the committed `data/futures_history_archive.csv`, which 
 identical data — so a Snowflake outage degrades rather than breaks the app. The Spread
 Builder's seasonal caption names whichever source actually served the rows.
 `snowflake/01_migrate_archive.py` creates the schema and (re-)loads it from the CSV.
-
-### Trends snapshot
-
-The **Trends** tab shows the two nearest contracts of each market. The maths is in
-`trend_board.py` (no Streamlit, so it can be checked on its own).
-
-- **Changes** compare the live price with the same contract's settlement a week, a calendar
-  month and a year earlier: the last settlement on or before that date, at most 7 days old.
-  A dash means the contract wasn't listed yet.
-- **Averages** are simple means of the contract's last 20, 100 and 200 daily settlements,
-  today's session included.
-- **Seasonal** takes the same contract month in each of the previous 15 years and measures
-  its move over the same 30-day window from today's calendar date. The average move sets the
-  read: Higher at +3% or more, Weaker at -3% or less, Neutral between. The years column counts
-  how many years finished above +3%, inside +/-3% and below -3%. A contract expiring inside 30
-  days is read to its expiry; inside 10 days, or with under 3 years of history, it shows a dash.
-
-The seasonal's history comes from the pre-2022 archive (corn and soybeans, 2008-2021), then
-the **settlement bank** (`JSA.COST_OF_CARRY.FUTURES_SETTLEMENTS`, filled daily by
-`settlement_archive.py`, every market since Oct 2021) read in one query, then Massive itself
-when Snowflake is off or unreachable (the same numbers, a minute slower). So corn and soybeans
-rest on 15 years, the other markets on about 5, and spring wheat on 1 because its feed only
-starts in April 2025. The years column shows what each read rests on, and a note under the
-table names the markets with fewer than 15. The bank deepens by a year each year; CME's
-end-of-day history isn't licensed, so it can't be bought back sooner.
 
 ### Historical storage and interest rates
 
