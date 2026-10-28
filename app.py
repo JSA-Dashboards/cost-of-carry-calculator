@@ -389,7 +389,21 @@ def export_row(frame: pd.DataFrame, filename: str, key: str, fig=None, styler=No
                     st.caption("PNG export unavailable — use the camera icon on the chart.")
 
 
+# Every spread in this app is built from the two legs' own settlements. None of them is
+# an exchange-listed spread contract, and the board's own spread markets can print
+# somewhere else, so the tables say so where they are read rather than in a footnote.
+DERIVED_SPREADS_NOTE = (
+    "Spreads are **derived** — calculated from each leg's settlement, not exchange-traded "
+    "instruments — and may differ from quoted spread markets."
+)
+
+
+def render_derived_note():
+    st.caption(DERIVED_SPREADS_NOTE)
+
+
 def render_legend():
+    render_derived_note()
     chips = "".join(
         f'<span style="{BUCKET_STYLE[b]}padding:2px 10px;border-radius:4px;font-size:0.82rem;'
         f'white-space:nowrap;">{txt}</span>'
@@ -1376,7 +1390,6 @@ def render_summary(api_key: str, as_of: date, default_rate_pct: float):
             f"<b>Date</b>&nbsp;&nbsp;{as_of:%m/%d/%Y}</div>",
             unsafe_allow_html=True,
         )
-    st.caption("Spreads are calculated arithmetically and could deviate from board quotes.")
     st.caption(DELAYED_QUOTES_NOTE)
     render_legend()
 
@@ -1589,6 +1602,7 @@ def render_crush(api_key: str, as_of: date):
         "Crush $/bu": "{:.3f}", "Beans ¢/bu": "{:.2f}",
         "Meal $/ton": "{:.2f}", "Oil ¢/lb": "{:.2f}",
     }).apply(lambda r: [GROUP_BAND if r.name % 2 == 0 else ""] * len(r), axis=1)
+    render_derived_note()
     with st.container(key="tablewrap_crush"):
         st.dataframe(styler, hide_index=True, width="stretch",
                      height=min(38 * (len(display) + 1) + 3, 480))
@@ -1916,6 +1930,7 @@ def render_vsr_tracker(api_key: str, as_of: date):
             "INT %": "{:.4f}", "Full carry $/bu": "{:.4f}", "Spread $/bu": "{:+.4f}",
             "Daily %": "{:.2%}", "Running avg": "{:.2%}",
         }).apply(lambda r: [GROUP_BAND if r.name % 2 == 0 else ""] * len(r), axis=1)
+        render_derived_note()
         with st.container(key=f"tablewrap_{slug}"):
             st.dataframe(styler, hide_index=True, width="stretch",
                          height=min(36 * (len(display) + 1) + 3, 520))
